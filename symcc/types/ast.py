@@ -1,3 +1,48 @@
+"""
+Types used to represent a full function/module as an Abstract Syntax Tree.
+
+Most types are small, and are merely used as tokens in the AST. A tree diagram
+has been included below to illustrate the relationships between the AST types.
+
+
+AST Type Tree
+-------------
+
+*Basic*
+     |--->Assign      
+     |--->AugAssign  
+     |--->NativeOp  
+     |           |--------------|
+     |                          |--->AddOp
+     |                          |--->SubOp
+     |                          |--->MulOp
+     |                          |--->DivOp
+     |                          |--->ModOp
+     |           *Singleton*----|
+     |                    |
+     |--->DataType        |
+     |           |--------|--->NativeBool
+     |                    |--->NativeInteger
+     |                    |--->NativeFloat
+     |                    |--->NativeDouble
+     |
+     |--->For
+     |--->Result
+     |         |--->ReturnResult
+     |         |------------------------------|
+     |                                        |--->InOutArgument
+     |--->Variable                            |--->OutArgument
+     |           |--->Argument----------------|
+     |                       |
+     |                       |--->InArgument
+     |
+     |--->Module
+     |--->FunctionDef
+     |--->Import
+     |--->Declare
+     |--->Return
+"""
+
 from __future__ import print_function, division
 
 
@@ -10,29 +55,6 @@ from sympy.tensor import Indexed
 from sympy.matrices.expressions.matexpr import MatrixSymbol, MatrixElement
 from sympy.utilities.iterables import iterable
 
-# Nodes
-# -----
-# * Tree Elements
-#   - Assign
-#   - AugAssign
-#   - For
-# * Variable Types
-#   - Variable
-#   - InArgument
-#   - OutArgument
-#   - InOutArgument
-#   - Result
-# * Module/Function Level
-#   - Module
-#   - FunctionDef
-#   - Import
-#   - Declare
-#   - Return
-
-
-# ----------
-# Assignment
-# ----------
 
 class Assign(Basic):
     """
@@ -103,9 +125,6 @@ class Assign(Basic):
     @property
     def rhs(self):
         return self._args[1]
-
-# TODO: Remove:
-Assignment = Assign
 
 
 # The following are defined to be sympy approved nodes. If there is something
@@ -211,7 +230,8 @@ class AugAssign(Basic):
 
     def _sympystr(self, printer):
         sstr = printer.doprint
-        return '{0} {1}= {2}'.format(sstr(self.lhs), self.op._symbol, sstr(self.rhs))
+        return '{0} {1}= {2}'.format(sstr(self.lhs), self.op._symbol,
+                sstr(self.rhs))
 
     @property
     def lhs(self):
@@ -225,10 +245,6 @@ class AugAssign(Basic):
     def rhs(self):
         return self._args[2]
 
-# -----
-# Loops
-# -----
-
 
 class For(Basic):
     def __new__(cls, target, iter, body):
@@ -236,7 +252,6 @@ class For(Basic):
         if not iterable(iter):
             raise TypeError("iter must be an iterable")
         iter = _sympify(iter)
-        # body
         if not iterable(body):
             raise TypeError("body must be an iterable")
         body = Tuple(*(_sympify(i) for i in body))
@@ -254,10 +269,6 @@ class For(Basic):
     def body(self):
         return self._args[2]
 
-
-# ---------
-# Datatypes
-# ---------
 
 # The following are defined to be sympy approved nodes. If there is something
 # smaller that could be used, that would be preferable. We only use them as
@@ -296,10 +307,6 @@ def datatype(dtype):
         raise ValueError("Unrecognized datatype " + dtype)
     return dtype_registry[dtype]
 
-# ---------
-# Arguments
-# ---------
-
 
 class Variable(Basic):
     """Represents a typed variable."""
@@ -327,27 +334,36 @@ class Argument(Variable):
     pass
 
 
-class Result(Variable):
+class Result(Basic):
     """Base class for all outgoing information from a routine."""
     pass
+
+
+class ReturnResult(Result):
+    def __new__(cls, dtype):
+        if isinstance(dtype, str):
+            dtype = datatype(dtype)
+        elif not isinstance(dtype, DataType):
+            raise TypeError("datatype must be an instance of DataType.")
+        return Basic.__new__(cls, dtype)
+
+    @property
+    def dtype(self):
+        return self._args[0]
 
 
 class InArgument(Argument):
     pass
 
 
-class OutArgument(Result, Argument):
+class OutArgument(Argument, Result):
     """OutputArgument are always initialized in the routine"""
     pass
 
 
-class InOutArgument(Result, Argument):
+class InOutArgument(Argument, Result):
     """InOutArgument are never initialized in the routine"""
     pass
-
-# ------------
-# Module Level
-# ------------
 
 
 class Module(Basic):
