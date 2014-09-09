@@ -57,8 +57,7 @@ from sympy.utilities.iterables import iterable
 
 
 class Assign(Basic):
-    """
-    Represents variable assignment for code generation.
+    """Represents variable assignment for code generation.
 
     Parameters
     ----------
@@ -133,6 +132,7 @@ class Assign(Basic):
 
 
 class NativeOp(with_metaclass(Singleton, Basic)):
+    """Base type for native operands."""
     pass
 
 
@@ -172,8 +172,7 @@ def operator(op):
 
 
 class AugAssign(Basic):
-    """
-    Represents augmented variable assignment for code generation.
+    """Represents augmented variable assignment for code generation.
 
     Parameters
     ----------
@@ -247,6 +246,19 @@ class AugAssign(Basic):
 
 
 class For(Basic):
+    """Represents a 'for-loop' in the code.
+
+    Expressions are of the form:
+        "for target in iter:
+            body..."
+
+    Parameters
+    ----------
+    target : symbol
+    iter : iterable
+    body : sympy expr
+    """
+    
     def __new__(cls, target, iter, body):
         target = _sympify(target)
         if not iterable(iter):
@@ -275,6 +287,7 @@ class For(Basic):
 # tokens.
 
 class DataType(with_metaclass(Singleton, Basic)):
+    """Base class representing native datatypes"""
     pass
 
 
@@ -295,7 +308,7 @@ class NativeDouble(DataType):
 
 
 dtype_registry = {'bool': NativeBool(),
-                  'integer': NativeInteger(),
+                  'int': NativeInteger(),
                   'float': NativeFloat(),
                   'double': NativeDouble()}
 
@@ -309,7 +322,16 @@ def datatype(dtype):
 
 
 class Variable(Basic):
-    """Represents a typed variable."""
+    """Represents a typed variable.
+    
+    Parameters
+    ----------
+    name : Symbol, MatrixSymbol
+        The sympy object the variable represents.
+    dtype : str, DataType
+        The type of the variable. Can be either a DataType, or a str (bool,
+        int, float, double).
+    """
 
     def __new__(cls, name, dtype):
         if not isinstance(name, (Symbol, MatrixSymbol)):
@@ -340,6 +362,8 @@ class Result(Basic):
 
 
 class ReturnResult(Result):
+    """Represents a result provided via a ``Return``"""
+
     def __new__(cls, dtype):
         if isinstance(dtype, str):
             dtype = datatype(dtype)
@@ -353,20 +377,31 @@ class ReturnResult(Result):
 
 
 class InArgument(Argument):
+    """Argument provided as input only."""
     pass
 
 
 class OutArgument(Argument, Result):
-    """OutputArgument are always initialized in the routine"""
+    """OutputArgument are always initialized in the routine."""
     pass
 
 
 class InOutArgument(Argument, Result):
-    """InOutArgument are never initialized in the routine"""
+    """InOutArgument are never initialized in the routine."""
     pass
 
 
 class Module(Basic):
+    """Represents a module-level object.
+
+    Parameters
+    ----------
+    name : str
+        The name of the module.
+    body : iterable
+        The elements inside the module.
+    """
+
     def __new__(cls, name, body):
         if not isinstance(name, str):
             raise TypeError("Module name must be string")
@@ -387,6 +422,20 @@ class Module(Basic):
 
 
 class FunctionDef(Basic):
+    """Represents a function definition.
+
+    Parameters
+    ----------
+    name : str
+        The name of the function.
+    args : iterable
+        The arguments to the function, of type Argument.
+    body : iterable
+        The body of the function.
+    results : iterable
+        The results of the function, of type Result.
+    """
+
     def __new__(cls, name, args, body, results):
         # name
         if not isinstance(name, str):
@@ -428,18 +477,37 @@ class FunctionDef(Basic):
 
 
 class Import(Basic):
+    """Represents inclusion of dependencies in the code.
+
+    Parameters
+    ----------
+    file_path : str
+        The filepath of the module (i.e. header in C).
+    func_name : str
+        The name of the function to be imported.
+    """
     def __new__(cls, file_path, func_name):
-        file_path = Symbol('file_path')
-        func_name = Symbol('func_name')
+        file_path = Symbol(file_path)
+        func_name = Symbol(func_name)
         return Basic.__new__(cls, file_path, func_name)
 
 
 # TODO: Should Declare have an optional init value for each var?
 class Declare(Basic):
-    def __new__(cls, variables):
+    """Represents a variable declaration in the code.
+
+    Parameters
+    ----------
+    dtype : DataType
+        The type for the declaration.
+    variables
+        A single variable or an iterable of Variables. If iterable, all
+        Variables must be of the same type.
+    """
+
+    def __new__(cls, dtype, variables):
         if isinstance(variables, Variable):
             variables = [variables]
-        dtype = variables[0].dtype
         for var in variables:
             if not isinstance(var, Variable):
                 raise TypeError("var must be of type Variable")
@@ -458,6 +526,14 @@ class Declare(Basic):
 
 
 class Return(Basic):
+    """Represents a function return in the code.
+
+    Parameters
+    ----------
+    expr : sympy expr
+        The expression to return
+    """
+
     def __new__(cls, expr):
         expr = _sympify(expr)
         return Basic.__new__(cls, expr)

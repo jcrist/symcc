@@ -7,11 +7,11 @@ from sympy.core.compatibility import is_sequence
 from sympy.tensor import Idx, Indexed, IndexedBase
 from sympy.matrices import MatrixSymbol, ImmutableMatrix, MatrixBase
 
-from symcc.types.ast import Assignment
+from symcc.types.ast import Assign
 
 __all__ = [
     # description of routines
-    "Assignment", "AssignmentError", "Routine", "DataType",
+    "Assign", "AssignmentError", "Routine", "DataType",
     "default_datatypes", "get_default_datatype", "Argument", "InputArgument",
     "Result"]
 

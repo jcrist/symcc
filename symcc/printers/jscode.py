@@ -4,7 +4,7 @@ from sympy.core import S
 from sympy.printing.precedence import precedence
 from sympy.core.compatibility import string_types
 
-from symcc.types.routines import Assignment
+from symcc.types.routines import Assign
 from symcc.printers.codeprinter import CodePrinter
 
 __all__ = ["JavascriptCodePrinter", "jscode"]
@@ -130,7 +130,7 @@ class JavascriptCodePrinter(CodePrinter):
                              "expression may not evaluate to anything under "
                              "some condition.")
         lines = []
-        if expr.has(Assignment):
+        if expr.has(Assign):
             for i, (e, c) in enumerate(expr.args):
                 if i == 0:
                     lines.append("if (%s) {" % self._print(c))

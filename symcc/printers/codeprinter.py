@@ -6,7 +6,7 @@ from sympy.core.mul import _keep_coeff
 from sympy.printing.str import StrPrinter
 from sympy.printing.precedence import precedence
 
-from symcc.types.routines import Assignment, AssignmentError
+from symcc.types.routines import Assign, AssignmentError
 
 __all__ = ["CodePrinter"]
 
@@ -42,7 +42,7 @@ class CodePrinter(StrPrinter):
                     type(self).__name__, type(assign_to)))
 
         if assign_to:
-            expr = Assignment(assign_to, expr)
+            expr = Assign(assign_to, expr)
 
         # keep a set of expressions that are not strictly translatable to Code
         # and number constants that must be declared and initialized
@@ -223,26 +223,26 @@ class CodePrinter(StrPrinter):
         raise NotImplementedError("This function must be implemented by "
                                   "subclass of CodePrinter.")
 
-    def _print_Assignment(self, expr):
+    def _print_Assign(self, expr):
         lhs = expr.lhs
         rhs = expr.rhs
         # We special case assignments that take multiple lines
         if isinstance(expr.rhs, C.Piecewise):
             # Here we modify Piecewise so each expression is now
-            # an Assignment, and then continue on the print.
+            # an Assign, and then continue on the print.
             expressions = []
             conditions = []
             for (e, c) in rhs.args:
-                expressions.append(Assignment(lhs, e))
+                expressions.append(Assign(lhs, e))
                 conditions.append(c)
             temp = C.Piecewise(*zip(expressions, conditions))
             return self._print(temp)
         elif isinstance(lhs, C.MatrixSymbol):
-            # Here we form an Assignment for each element in the array,
+            # Here we form an Assign for each element in the array,
             # printing each one.
             lines = []
             for (i, j) in self._traverse_matrix_indices(lhs):
-                temp = Assignment(lhs[i, j], rhs[i, j])
+                temp = Assign(lhs[i, j], rhs[i, j])
                 code0 = self._print(temp)
                 lines.append(code0)
             return "\n".join(lines)
