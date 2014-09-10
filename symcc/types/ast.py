@@ -25,6 +25,7 @@ AST Type Tree
      |                    |--->NativeInteger
      |                    |--->NativeFloat
      |                    |--->NativeDouble
+     |                    |--->NativeVoid
      |
      |--->For
      |--->Result
@@ -307,10 +308,15 @@ class NativeDouble(DataType):
     pass
 
 
+class NativeVoid(DataType):
+    pass
+
+
 dtype_registry = {'bool': NativeBool(),
                   'int': NativeInteger(),
                   'float': NativeFloat(),
-                  'double': NativeDouble()}
+                  'double': NativeDouble(),
+                  'void': NativeVoid()}
 
 
 def datatype(dtype):
@@ -491,6 +497,14 @@ class Import(Basic):
         func_name = Symbol(func_name)
         return Basic.__new__(cls, file_path, func_name)
 
+    @property
+    def file_path(self):
+        return self._args[0]
+
+    @property
+    def func_name(self):
+        return self._args[1]
+
 
 # TODO: Should Declare have an optional init value for each var?
 class Declare(Basic):
@@ -498,11 +512,11 @@ class Declare(Basic):
 
     Parameters
     ----------
-    dtype : DataType
-        The type for the declaration.
-    variables
+    variable(s)
         A single variable or an iterable of Variables. If iterable, all
         Variables must be of the same type.
+    dtype : DataType
+        The type for the declaration.
     """
 
     def __new__(cls, dtype, variables):
@@ -521,7 +535,7 @@ class Declare(Basic):
         return self._args[0]
 
     @property
-    def vars(self):
+    def variables(self):
         return self._args[1]
 
 

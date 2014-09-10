@@ -2,6 +2,7 @@ from __future__ import print_function, division
 
 from sympy.core import C, Add, Mul, Pow, S
 from sympy.core.compatibility import default_sort_key, string_types
+from sympy.core.sympify import _sympify
 from sympy.core.mul import _keep_coeff
 from sympy.printing.str import StrPrinter
 from sympy.printing.precedence import precedence
@@ -43,157 +44,18 @@ class CodePrinter(StrPrinter):
 
         if assign_to:
             expr = Assign(assign_to, expr)
+        else:
+            expr = _sympify(expr)
 
-        # keep a set of expressions that are not strictly translatable to Code
-        # and number constants that must be declared and initialized
-        self._not_supported = set()
-        self._number_symbols = set()
-
+        # Do the actual printing
         lines = self._print(expr).splitlines()
 
-        # format the output
+        # Format the output
         if self._settings["human"]:
-            frontlines = []
-            if len(self._not_supported) > 0:
-                frontlines.append(self._get_comment(
-                        "Not supported in {0}:".format(self.language)))
-                for expr in sorted(self._not_supported, key=str):
-                    frontlines.append(self._get_comment(type(expr).__name__))
-            for name, value in sorted(self._number_symbols, key=str):
-                frontlines.append(self._declare_number_const(name, value))
-            lines = frontlines + lines
-            lines = self._format_code(lines)
-            result = "\n".join(lines)
+            result = "\n".join(self._format_code(lines))
         else:
-            lines = self._format_code(lines)
-            result = (self._number_symbols, self._not_supported,
-                    "\n".join(lines))
-        del self._not_supported
-        del self._number_symbols
+            result = "\n".join(self._format_code(lines))
         return result
-
-    def _doprint_loops(self, expr, assign_to=None):
-        # Here we print an expression that contains Indexed objects, they
-        # correspond to arrays in the generated code.  The low-level implementation
-        # involves looping over array elements and possibly storing results in temporary
-        # variables or accumulate it in the assign_to object.
-
-        if self._settings.get('contract', True):
-            from sympy.tensor import get_contraction_structure
-            # Setup loops over non-dummy indices  --  all terms need these
-            indices = self._get_expression_indices(expr, assign_to)
-            # Setup loops over dummy indices  --  each term needs separate treatment
-            dummies = get_contraction_structure(expr)
-        else:
-            indices = []
-            dummies = {None: (expr,)}
-        openloop, closeloop = self._get_loop_opening_ending(indices)
-
-        # terms with no summations first
-        if None in dummies:
-            text = StrPrinter.doprint(self, Add(*dummies[None]))
-        else:
-            # If all terms have summations we must initialize array to Zero
-            text = StrPrinter.doprint(self, 0)
-
-        # skip redundant assignments (where lhs == rhs)
-        lhs_printed = self._print(assign_to)
-        lines = []
-        if text != lhs_printed:
-            lines.extend(openloop)
-            if assign_to is not None:
-                text = self._get_statement("%s = %s" % (lhs_printed, text))
-            lines.append(text)
-            lines.extend(closeloop)
-
-        # then terms with summations
-        for d in dummies:
-            if isinstance(d, tuple):
-                indices = self._sort_optimized(d, expr)
-                openloop_d, closeloop_d = self._get_loop_opening_ending(
-                    indices)
-
-                for term in dummies[d]:
-                    if term in dummies and not ([list(f.keys()) for f in dummies[term]]
-                            == [[None] for f in dummies[term]]):
-                        # If one factor in the term has it's own internal
-                        # contractions, those must be computed first.
-                        # (temporary variables?)
-                        raise NotImplementedError(
-                            "FIXME: no support for contractions in factor yet")
-                    else:
-
-                        # We need the lhs expression as an accumulator for
-                        # the loops, i.e
-                        #
-                        # for (int d=0; d < dim; d++){
-                        #    lhs[] = lhs[] + term[][d]
-                        # }           ^.................. the accumulator
-                        #
-                        # We check if the expression already contains the
-                        # lhs, and raise an exception if it does, as that
-                        # syntax is currently undefined.  FIXME: What would be
-                        # a good interpretation?
-                        if assign_to is None:
-                            raise AssignmentError(
-                                "need assignment variable for loops")
-                        if term.has(assign_to):
-                            raise ValueError("FIXME: lhs present in rhs,\
-                                this is undefined in CodePrinter")
-
-                        lines.extend(openloop)
-                        lines.extend(openloop_d)
-                        text = "%s = %s" % (lhs_printed, StrPrinter.doprint(
-                            self, assign_to + term))
-                        lines.append(self._get_statement(text))
-                        lines.extend(closeloop_d)
-                        lines.extend(closeloop)
-
-        return "\n".join(lines)
-
-    def _get_expression_indices(self, expr, assign_to):
-        from sympy.tensor import get_indices
-        rinds, junk = get_indices(expr)
-        linds, junk = get_indices(assign_to)
-
-        # support broadcast of scalar
-        if linds and not rinds:
-            rinds = linds
-        if rinds != linds:
-            raise ValueError("lhs indices must match non-dummy"
-                    " rhs indices in %s" % expr)
-
-        return self._sort_optimized(rinds, assign_to)
-
-    def _sort_optimized(self, indices, expr):
-
-        if not indices:
-            return []
-
-        # determine optimized loop order by giving a score to each index
-        # the index with the highest score are put in the innermost loop.
-        score_table = {}
-        for i in indices:
-            score_table[i] = 0
-
-        arrays = expr.atoms(C.Indexed)
-        for arr in arrays:
-            for p, ind in enumerate(arr.indices):
-                try:
-                    score_table[ind] += self._rate_index_position(p)
-                except KeyError:
-                    pass
-
-        return sorted(indices, key=lambda x: score_table[x])
-
-    def _rate_index_position(self, p):
-        """function to calculate score based on position among indices
-
-        This method is used to sort loops in an optimized order, see
-        CodePrinter._sort_optimized()
-        """
-        raise NotImplementedError("This function must be implemented by "
-                                  "subclass of CodePrinter.")
 
     def _get_statement(self, codestring):
         """Formats a codestring with the proper line ending."""
@@ -217,44 +79,10 @@ class CodePrinter(StrPrinter):
         raise NotImplementedError("This function must be implemented by "
                                   "subclass of CodePrinter.")
 
-    def _get_loop_opening_ending(self, indices):
-        """Returns a tuple (open_lines, close_lines) containing lists
-        of codelines"""
-        raise NotImplementedError("This function must be implemented by "
-                                  "subclass of CodePrinter.")
-
     def _print_Assign(self, expr):
-        lhs = expr.lhs
-        rhs = expr.rhs
-        # We special case assignments that take multiple lines
-        if isinstance(expr.rhs, C.Piecewise):
-            # Here we modify Piecewise so each expression is now
-            # an Assign, and then continue on the print.
-            expressions = []
-            conditions = []
-            for (e, c) in rhs.args:
-                expressions.append(Assign(lhs, e))
-                conditions.append(c)
-            temp = C.Piecewise(*zip(expressions, conditions))
-            return self._print(temp)
-        elif isinstance(lhs, C.MatrixSymbol):
-            # Here we form an Assign for each element in the array,
-            # printing each one.
-            lines = []
-            for (i, j) in self._traverse_matrix_indices(lhs):
-                temp = Assign(lhs[i, j], rhs[i, j])
-                code0 = self._print(temp)
-                lines.append(code0)
-            return "\n".join(lines)
-        elif self._settings["contract"] and (lhs.has(C.IndexedBase) or
-                rhs.has(C.IndexedBase)):
-            # Here we check if there is looping to be done, and if so
-            # print the required loops.
-            return self._doprint_loops(rhs, lhs)
-        else:
-            lhs_code = self._print(lhs)
-            rhs_code = self._print(rhs)
-            return self._get_statement("%s = %s" % (lhs_code, rhs_code))
+        lhs_code = self._print(expr.lhs)
+        rhs_code = self._print(expr.rhs)
+        return self._get_statement("%s = %s" % (lhs_code, rhs_code))
 
     def _print_Function(self, expr):
         if expr.func.__name__ in self.known_functions:
@@ -285,11 +113,6 @@ class CodePrinter(StrPrinter):
         # dummies must be printed as unique symbols
         return "%s_%i" % (expr.name, expr.dummy_index)  # Dummy
 
-    _print_Catalan = _print_NumberSymbol
-    _print_EulerGamma = _print_NumberSymbol
-    _print_GoldenRatio = _print_NumberSymbol
-    _print_Exp1 = _print_NumberSymbol
-    _print_Pi = _print_NumberSymbol
 
     def _print_And(self, expr):
         PREC = precedence(expr)
@@ -367,6 +190,13 @@ class CodePrinter(StrPrinter):
     def _print_not_supported(self, expr):
         self._not_supported.add(expr)
         return self.emptyPrinter(expr)
+
+    # Number constants
+    _print_Catalan = _print_NumberSymbol
+    _print_EulerGamma = _print_NumberSymbol
+    _print_GoldenRatio = _print_NumberSymbol
+    _print_Exp1 = _print_NumberSymbol
+    _print_Pi = _print_NumberSymbol
 
     # The following can not be simply translated into C or Fortran
     _print_Basic = _print_not_supported

@@ -3,8 +3,9 @@ from __future__ import print_function, division
 from sympy.core import S
 from sympy.core.compatibility import string_types
 from sympy.printing.precedence import precedence
+from sympy.sets.fancysets import Range
 
-from symcc.types.routines import Assign
+from symcc.types.ast import Assign, datatype, ReturnResult
 from symcc.printers.codeprinter import CodePrinter
 
 __all__ = ["CCodePrinter", "ccode"]
@@ -46,7 +47,6 @@ class CCodePrinter(CodePrinter):
         'precision': 15,
         'user_functions': {},
         'human': True,
-        'contract': True,
         'dereference': set()
     }
 
@@ -57,17 +57,11 @@ class CCodePrinter(CodePrinter):
         self.known_functions.update(userfuncs)
         self._dereference = set(settings.get('dereference', []))
 
-    def _rate_index_position(self, p):
-        return p*5
-
     def _get_statement(self, codestring):
         return "%s;" % codestring
 
     def _get_comment(self, text):
         return "// {0}".format(text)
-
-    def _declare_number_const(self, name, value):
-        return "double const {0} = {1};".format(name, value)
 
     def _format_code(self, lines):
         return self.indent_code(lines)
@@ -76,18 +70,82 @@ class CCodePrinter(CodePrinter):
         rows, cols = mat.shape
         return ((i, j) for i in range(rows) for j in range(cols))
 
-    def _get_loop_opening_ending(self, indices):
-        open_lines = []
-        close_lines = []
-        loopstart = "for (int %(var)s=%(start)s; %(var)s<%(end)s; %(var)s++){"
-        for i in indices:
-            # C arrays start at 0 and end at dimension-1
-            open_lines.append(loopstart % {
-                'var': self._print(i.label),
-                'start': self._print(i.lower),
-                'end': self._print(i.upper + 1)})
-            close_lines.append("}")
-        return open_lines, close_lines
+    # ============ Elements ============ #
+
+    def _print_Module(self, expr):
+        return '\n\n'.join(self._print(i) for i in expr.body)
+
+    def _print_Import(self, expr):
+        return '#include "{0}"'.format(expr.file_path)
+
+    def _print_Declare(self, expr):
+        dtype = self._print(expr.dtype)
+        variables = ', '.join(self._print(i.name) for i in expr.variables)
+        return '{0} {1};'.format(dtype, variables)
+
+    def _print_NativeBool(self, expr):
+        return 'bool'
+
+    def _print_NativeInteger(self, expr):
+        return 'int'
+
+    def _print_NativeFloat(self, expr):
+        return 'float'
+
+    def _print_NativeDouble(self, expr):
+        return 'double'
+
+    def _print_NativeVoid(self, expr):
+        return 'void'
+
+    def _print_FunctionDef(self, expr):
+        returns = [r for r in expr.results if isinstance(r, ReturnResult)]
+        if len(returns) == 1:
+            ret_type = self._print(returns[0].dtype)
+        elif len(returns) > 1:
+            raise ValueError("C doesn't support multiple return values.")
+        else:
+            ret_type = self._print(datatype('void'))
+        name = expr.name
+        arg_code = ', '.join(self._print(i) for i in expr.arguments)
+        body = '\n'.join(self._print(i) for i in expr.body)
+        return '{0} {1}({2}) {{\n{3}\n}}'.format(ret_type, name, arg_code, body)
+
+    def _print_InArgument(self, expr):
+        dtype = self._print(expr.dtype)
+        arg = self._print(expr.name)
+        return '{0} {1}'.format(dtype, arg)
+
+    def _print_OutArgument(self, expr):
+        dtype = self._print(expr.dtype)
+        arg = self._print(expr.name)
+        return '{0} *{1}'.format(dtype, arg)
+
+    def _print_InOutArgument(self, expr):
+        dtype = self._print(expr.dtype)
+        arg = self._print(expr.name)
+        return '{0} *{1}'.format(dtype, arg)
+
+    def _print_Return(self, expr):
+        return 'return {0};'.format(self._print(expr.expr))
+
+    def _print_AugAssign(self, expr):
+        lhs_code = self._print(expr.lhs)
+        op = expr.op._symbol
+        rhs_code = self._print(expr.rhs)
+        return "{0} {1}= {2};".format(lhs_code, op, rhs_code)
+
+    def _print_For(self, expr):
+        target = self._print(expr.target)
+        if isinstance(expr.iterable, Range):
+            start, stop, step = expr.iterable.args
+        else:
+            raise NotImplementedError("Only iterable currently supported is Range")
+        body = '\n'.join(self._print(i) for i in expr.body)
+        return ('for ({target} = {start};, {target} < {stop}; {target} += '
+                '{step}) {{\n{body}\n}}').format(target=target, start=start,
+                step=step, stop=stop, body=body)
+
 
     def _print_Pow(self, expr):
         if "Pow" in self.known_functions:
