@@ -45,7 +45,6 @@ class FCodePrinter(CodePrinter):
         'full_prec': 'auto',
         'precision': 15,
         'user_functions': {},
-        'source_format': 'fixed',
     }
 
     _operators = {
@@ -65,18 +64,6 @@ class FCodePrinter(CodePrinter):
         self.known_functions = dict(known_functions)
         userfuncs = settings.get('user_functions', {})
         self.known_functions.update(userfuncs)
-        # leading columns depend on fixed or free format
-        if self._settings['source_format'] == 'fixed':
-            self._lead_code = "      "
-            self._lead_cont = "     @ "
-            self._lead_comment = "C     "
-        elif self._settings['source_format'] == 'free':
-            self._lead_code = ""
-            self._lead_cont = "      "
-            self._lead_comment = "! "
-        else:
-            raise ValueError("Unknown source format: %s" % self._settings[
-                             'source_format'])
 
     def _get_statement(self, codestring):
         return codestring
@@ -330,9 +317,9 @@ class FCodePrinter(CodePrinter):
         result = []
         for line in lines:
             if line.startswith('!'):
-                result.append(self._lead_comment + line[1:].lstrip())
+                result.append("! " + line[1:].lstrip())
             else:
-                result.append(self._lead_code + line)
+                result.append(line)
         return result
 
     def _wrap_fortran(self, lines):
@@ -364,12 +351,9 @@ class FCodePrinter(CodePrinter):
             return pos
         # split line by line and add the splitted lines to result
         result = []
-        if self._settings['source_format'] == 'free':
-            trailing = ' &'
-        else:
-            trailing = ''
+        trailing = ' &'
         for line in lines:
-            if line.startswith(self._lead_comment):
+            if line.startswith("! "):
                 # comment line
                 if len(line) > 72:
                     pos = line.rfind(" ", 6, 72)
@@ -384,10 +368,10 @@ class FCodePrinter(CodePrinter):
                             pos = 66
                         hunk = line[:pos]
                         line = line[pos:].lstrip()
-                        result.append("%s%s" % (self._lead_comment, hunk))
+                        result.append("%s%s" % ("! ", hunk))
                 else:
                     result.append(line)
-            elif line.startswith(self._lead_code):
+            else:
                 # code line
                 pos = split_pos_code(line, 72)
                 hunk = line[:pos].rstrip()
@@ -401,9 +385,7 @@ class FCodePrinter(CodePrinter):
                     line = line[pos:].lstrip()
                     if line:
                         hunk += trailing
-                    result.append("%s%s" % (self._lead_cont, hunk))
-            else:
-                result.append(line)
+                    result.append("%s%s" % ("      " , hunk))
         return result
 
     def indent_code(self, code):
@@ -412,7 +394,6 @@ class FCodePrinter(CodePrinter):
             code_lines = self.indent_code(code.splitlines(True))
             return ''.join(code_lines)
 
-        free = self._settings['source_format'] == 'free'
         code = [ line.lstrip(' \t') for line in code ]
 
         inc_keyword = ('do ', 'if(', 'if ', 'do\n', 'else')
@@ -435,14 +416,9 @@ class FCodePrinter(CodePrinter):
                 continue
             level -= decrease[i]
 
-            if free:
-                padding = " "*(level*tabwidth + cont_padding)
-            else:
-                padding = " "*level*tabwidth
+            padding = " "*(level*tabwidth + cont_padding)
 
             line = "%s%s" % (padding, line)
-            if not free:
-                line = self._pad_leading_columns([line])[0]
 
             new_code.append(line)
 
@@ -452,8 +428,6 @@ class FCodePrinter(CodePrinter):
                 cont_padding = 0
             level += increase[i]
 
-        if not free:
-            return self._wrap_fortran(new_code)
         return new_code
 
 
@@ -477,8 +451,6 @@ def fcode(expr, assign_to=None, **settings):
         their string representations. Alternatively, the dictionary value can
         be a list of tuples i.e. [(argument_test, cfunction_string)]. See below
         for examples.
-    source_format : optional
-        The source format can be either 'fixed' or 'free'. [default='fixed']
 
     Examples
     ========
