@@ -51,11 +51,7 @@ class CodePrinter(StrPrinter):
         lines = self._print(expr).splitlines()
 
         # Format the output
-        if self._settings["human"]:
-            result = "\n".join(self._format_code(lines))
-        else:
-            result = "\n".join(self._format_code(lines))
-        return result
+        return "\n".join(self._format_code(lines))
 
     def _get_statement(self, codestring):
         """Formats a codestring with the proper line ending."""

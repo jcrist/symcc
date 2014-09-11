@@ -1,11 +1,17 @@
+"""Print to F90 standard. Trying to follow the information provided at
+www.fortran90.org as much as possible."""
+
 from __future__ import print_function, division
 import string
+from itertools import groupby
 
 from sympy.core import S, C, Add, N
 from sympy.core.compatibility import string_types
 from sympy.printing.precedence import precedence
+from sympy.sets.fancysets import Range
 
-from symcc.types.routines import Assign
+from symcc.types.ast import (Assign, ReturnResult, InArgument,
+        OutArgument, InOutArgument, Variable)
 from symcc.printers.codeprinter import CodePrinter
 
 __all__ = ["FCodePrinter", "fcode"]
@@ -39,10 +45,7 @@ class FCodePrinter(CodePrinter):
         'full_prec': 'auto',
         'precision': 15,
         'user_functions': {},
-        'human': True,
         'source_format': 'fixed',
-        'contract': True,
-        'standard': 77
     }
 
     _operators = {
@@ -74,22 +77,12 @@ class FCodePrinter(CodePrinter):
         else:
             raise ValueError("Unknown source format: %s" % self._settings[
                              'source_format'])
-        standards = set([66, 77, 90, 95, 2003, 2008])
-        if self._settings['standard'] not in standards:
-            raise ValueError("Unknown Fortran standard: %s" % self._settings[
-                             'standard'])
-
-    def _rate_index_position(self, p):
-        return -p*5
 
     def _get_statement(self, codestring):
         return codestring
 
     def _get_comment(self, text):
         return "! {0}".format(text)
-
-    def _declare_number_const(self, name, value):
-        return "parameter ({0} = {1})".format(name, value)
 
     def _format_code(self, lines):
         return self._wrap_fortran(self.indent_code(lines))
@@ -98,16 +91,97 @@ class FCodePrinter(CodePrinter):
         rows, cols = mat.shape
         return ((i, j) for j in range(cols) for i in range(rows))
 
-    def _get_loop_opening_ending(self, indices):
-        open_lines = []
-        close_lines = []
-        for i in indices:
-            # fortran arrays start at 1 and end at dimension
-            var, start, stop = map(self._print,
-                    [i.label, i.lower + 1, i.upper + 1])
-            open_lines.append("do %s = %s, %s" % (var, start, stop))
-            close_lines.append("end do")
-        return open_lines, close_lines
+    # ============ Elements ============ #
+
+    def _print_Module(self, expr):
+        return '\n\n'.join(self._print(i) for i in expr.body)
+
+    def _print_Import(self, expr):
+        return '#include "{0}"'.format(expr.file_path)
+
+    def _print_Declare(self, expr):
+        dtype = self._print(expr.dtype)
+        intent_lookup = {InArgument: 'in',
+                         OutArgument: 'out',
+                         InOutArgument: 'inout',
+                         Variable: None}
+        # Group the variables by intent
+        f = lambda x: intent_lookup[type(x)]
+        arg_types = [type(v) for v in expr.variables]
+        var_list = groupby(sorted(expr.variables, key=f), f)
+        decs = []
+        for intent, g in var_list:
+            vstr = ', '.join(self._print(i.name) for i in g)
+            if intent:
+                decs.append('{0}, intent({1}) :: {2}'.format(dtype, intent, vstr))
+            else:
+                decs.append('{0} :: {2}'.format(dtype, intent, vstr))
+        return '\n'.join(decs)
+
+    def _print_NativeBool(self, expr):
+        return 'logical'
+
+    def _print_NativeInteger(self, expr):
+        return 'integer'
+
+    def _print_NativeFloat(self, expr):
+        return 'real'
+
+    def _print_NativeDouble(self, expr):
+        # TODO: Create master header to be included, include dp definition
+        return 'real(dp)'
+
+    def _print_FunctionDef(self, expr):
+        name = expr.name
+        returns = [r for r in expr.results if isinstance(r, ReturnResult)]
+        if len(returns) == 1:
+            ret_type = self._print(returns[0].dtype)
+            sig = '{0} function {1}'.format(ret_type, name)
+            func_type = 'function'
+        elif len(returns) > 1:
+            raise ValueError("Fortran doesn't support multiple return values.")
+        else:
+            sig = 'subroutine ' + name
+            func_type = 'subroutine'
+        arg_code = ', '.join(self._print(i) for i in expr.arguments)
+        body = '\n'.join(self._print(i) for i in expr.body)
+        return ('{0}({1})\n'
+                'implicit none\n'
+                'integer, parameter:: dp=kind(0.d0)\n'
+                '{2}\n'
+                'end {3}').format(sig, arg_code, body, func_type)
+
+    def _print_InArgument(self, expr):
+        return self._print(expr.name)
+
+    def _print_OutArgument(self, expr):
+        return self._print(expr.name)
+
+    def _print_InOutArgument(self, expr):
+        return self._print(expr.name)
+
+    def _print_Return(self, expr):
+        # TODO: It may be easier to add an optional lhs (may be better name)
+        # attr to Return, to allow Fortran to use this instead of needing
+        # to convert all returns to Assign(func, expr).
+        if expr.expr:
+            raise ValueError("Fortran return doesn't accept expressions")
+        return 'return'
+
+    def _print_AugAssign(self, expr):
+        raise NotImplementedError("Fortran doesn't support AugAssign")
+
+    def _print_For(self, expr):
+        target = self._print(expr.target)
+        if isinstance(expr.iterable, Range):
+            start, stop, step = expr.iterable.args
+        else:
+            raise NotImplementedError("Only iterable currently supported is Range")
+        body = '\n'.join(self._print(i) for i in expr.body)
+        return ('do {target} = {start}, {stop}, {step}\n'
+                '{body}\n'
+                'end do').format(target=target, start=start, stop=stop,
+                        step=step, body=body)
 
     def _print_Piecewise(self, expr):
         if expr.args[-1].cond != True:
@@ -130,8 +204,7 @@ class FCodePrinter(CodePrinter):
                 lines.append(self._print(e))
             lines.append("end if")
             return "\n".join(lines)
-        elif self._settings["standard"] >= 95:
-            # Only supported in F95 and newer:
+        else:
             # The piecewise was used in an expression, need to do inline
             # operators. This has the downside that inline operators will
             # not work for statements that span multiple lines (Matrix or
@@ -145,11 +218,6 @@ class FCodePrinter(CodePrinter):
                 cond = self._print(c)
                 code = pattern.format(T=expr, F=code, COND=cond)
             return code
-        else:
-            # `merge` is not supported prior to F95
-            raise NotImplementedError("Using Piecewise as an expression using "
-                                      "inline operators is not supported in "
-                                      "standards earlier than Fortran95.")
 
     def _print_MatrixElement(self, expr):
         return "{0}({1}, {2})".format(expr.parent, expr.i + 1, expr.j + 1)
@@ -404,25 +472,8 @@ def fcode(expr, assign_to=None, **settings):
         their string representations. Alternatively, the dictionary value can
         be a list of tuples i.e. [(argument_test, cfunction_string)]. See below
         for examples.
-    human : bool, optional
-        If True, the result is a single string that may contain some constant
-        declarations for the number symbols. If False, the same information is
-        returned in a tuple of (symbols_to_declare, not_supported_functions,
-        code_text). [default=True].
-    contract: bool, optional
-        If True, ``Indexed`` instances are assumed to obey tensor contraction
-        rules and the corresponding nested loops over indices are generated.
-        Setting contract=False will not generate loops, instead the user is
-        responsible to provide values for the indices in the code.
-        [default=True].
     source_format : optional
         The source format can be either 'fixed' or 'free'. [default='fixed']
-    standard : integer, optional
-        The Fortran standard to be followed. This is specified as an integer.
-        Acceptable standards are 66, 77, 90, 95, 2003, and 2008. Default is 77.
-        Note that currently the only distinction internally is between
-        standards before 95, and those 95 and after. This may change later as
-        more features are added.
 
     Examples
     ========
@@ -462,21 +513,6 @@ def fcode(expr, assign_to=None, **settings):
           else
              tau = x
           end if
-
-    Support for loops is provided through ``Indexed`` types. With
-    ``contract=True`` these expressions will be turned into loops, whereas
-    ``contract=False`` will just print the assignment expression that should be
-    looped over:
-
-    >>> from sympy import Eq, IndexedBase, Idx
-    >>> len_y = 5
-    >>> y = IndexedBase('y', shape=(len_y,))
-    >>> t = IndexedBase('t', shape=(len_y,))
-    >>> Dy = IndexedBase('Dy', shape=(len_y-1,))
-    >>> i = Idx('i', len_y-1)
-    >>> e=Eq(Dy[i], (y[i+1]-y[i])/(t[i+1]-t[i]))
-    >>> fcode(e.rhs, assign_to=e.lhs, contract=False)
-    '      Dy(i) = (y(i + 1) - y(i))/(t(i + 1) - t(i))'
 
     Matrices are also supported, but a ``MatrixSymbol`` of the same dimensions
     must be provided to ``assign_to``. Note that any expression that can be

@@ -46,7 +46,6 @@ class CCodePrinter(CodePrinter):
         'full_prec': 'auto',
         'precision': 15,
         'user_functions': {},
-        'human': True,
         'dereference': set()
     }
 
@@ -142,10 +141,9 @@ class CCodePrinter(CodePrinter):
         else:
             raise NotImplementedError("Only iterable currently supported is Range")
         body = '\n'.join(self._print(i) for i in expr.body)
-        return ('for ({target} = {start};, {target} < {stop}; {target} += '
+        return ('for ({target} = {start}; {target} < {stop}; {target} += '
                 '{step}) {{\n{body}\n}}').format(target=target, start=start,
-                step=step, stop=stop, body=body)
-
+                stop=stop, step=step, body=body)
 
     def _print_Pow(self, expr):
         if "Pow" in self.known_functions:
@@ -284,17 +282,6 @@ def ccode(expr, assign_to=None, **settings):
         expression. These would be values passed by address to the function.
         For example, if ``dereference=[a]``, the resulting code would print
         ``(*a)`` instead of ``a``.
-    human : bool, optional
-        If True, the result is a single string that may contain some constant
-        declarations for the number symbols. If False, the same information is
-        returned in a tuple of (symbols_to_declare, not_supported_functions,
-        code_text). [default=True].
-    contract: bool, optional
-        If True, ``Indexed`` instances are assumed to obey tensor contraction
-        rules and the corresponding nested loops over indices are generated.
-        Setting contract=False will not generate loops, instead the user is
-        responsible to provide values for the indices in the code.
-        [default=True].
 
     Examples
     ========
@@ -335,21 +322,6 @@ def ccode(expr, assign_to=None, **settings):
     else {
     tau = x;
     }
-
-    Support for loops is provided through ``Indexed`` types. With
-    ``contract=True`` these expressions will be turned into loops, whereas
-    ``contract=False`` will just print the assignment expression that should be
-    looped over:
-
-    >>> from sympy import Eq, IndexedBase, Idx
-    >>> len_y = 5
-    >>> y = IndexedBase('y', shape=(len_y,))
-    >>> t = IndexedBase('t', shape=(len_y,))
-    >>> Dy = IndexedBase('Dy', shape=(len_y-1,))
-    >>> i = Idx('i', len_y-1)
-    >>> e=Eq(Dy[i], (y[i+1]-y[i])/(t[i+1]-t[i]))
-    >>> ccode(e.rhs, assign_to=e.lhs, contract=False)
-    'Dy[i] = (y[i + 1] - y[i])/(t[i + 1] - t[i]);'
 
     Matrices are also supported, but a ``MatrixSymbol`` of the same dimensions
     must be provided to ``assign_to``. Note that any expression that can be
