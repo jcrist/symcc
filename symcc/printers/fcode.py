@@ -458,9 +458,9 @@ def fcode(expr, assign_to=None, **settings):
     >>> from sympy import fcode, symbols, Rational, sin, ceiling, floor
     >>> x, tau = symbols("x, tau")
     >>> fcode((2*tau)**Rational(7, 2))
-    '      8*sqrt(2.0d0)*tau**(7.0d0/2.0d0)'
+    '8*sqrt(2.0d0)*tau**(7.0d0/2.0d0)'
     >>> fcode(sin(x), assign_to="s")
-    '      s = sin(x)'
+    's = sin(x)'
 
     Custom printing can be defined for certain types by passing a dictionary of
     "type" : "function" to the ``user_functions`` kwarg. Alternatively, the
@@ -473,7 +473,7 @@ def fcode(expr, assign_to=None, **settings):
     ...             (lambda x: x.is_integer, "FLOOR2")]
     ... }
     >>> fcode(floor(x) + ceiling(x), user_functions=custom_functions)
-    '      CEIL(x) + FLOOR1(x)'
+    'CEIL(x) + FLOOR1(x)'
 
     ``Piecewise`` expressions are converted into conditionals. If an
     ``assign_to`` variable is provided an if statement is created, otherwise
@@ -485,11 +485,11 @@ def fcode(expr, assign_to=None, **settings):
     >>> from sympy import Piecewise
     >>> expr = Piecewise((x + 1, x > 0), (x, True))
     >>> print(fcode(expr, tau))
-          if (x > 0) then
-             tau = x + 1
-          else
-             tau = x
-          end if
+    if (x > 0) then
+        tau = x + 1
+    else
+        tau = x
+    end if
 
     Matrices are also supported, but a ``MatrixSymbol`` of the same dimensions
     must be provided to ``assign_to``. Note that any expression that can be
@@ -499,13 +499,13 @@ def fcode(expr, assign_to=None, **settings):
     >>> mat = Matrix([x**2, Piecewise((x + 1, x > 0), (x, True)), sin(x)])
     >>> A = MatrixSymbol('A', 3, 1)
     >>> print(fcode(mat, A))
-          A(1, 1) = x**2
-             if (x > 0) then
-          A(2, 1) = x + 1
-             else
-          A(2, 1) = x
-             end if
-          A(3, 1) = sin(x)
+    A(1, 1) = x**2
+        if (x > 0) then
+    A(2, 1) = x + 1
+        else
+    A(2, 1) = x
+        end if
+    A(3, 1) = sin(x)
     """
 
     return FCodePrinter(settings).doprint(expr, assign_to)
