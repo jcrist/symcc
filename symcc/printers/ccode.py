@@ -75,7 +75,7 @@ class CCodePrinter(CodePrinter):
         return '\n\n'.join(self._print(i) for i in expr.body)
 
     def _print_Import(self, expr):
-        return '#include "{0}"'.format(expr.file_path)
+        return '#include "{0}"'.format(expr.fil)
 
     def _print_Declare(self, expr):
         dtype = self._print(expr.dtype)

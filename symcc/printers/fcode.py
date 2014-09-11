@@ -97,7 +97,12 @@ class FCodePrinter(CodePrinter):
         return '\n\n'.join(self._print(i) for i in expr.body)
 
     def _print_Import(self, expr):
-        return '#include "{0}"'.format(expr.file_path)
+        fil = self._print(expr.fil)
+        if not expr.funcs:
+            return 'use {0}'.format(fil)
+        else:
+            funcs = ', '.join(self._print(f) for f in expr.funcs)
+            return 'use {0}, only: {1}'.format(fil, funcs)
 
     def _print_Declare(self, expr):
         dtype = self._print(expr.dtype)

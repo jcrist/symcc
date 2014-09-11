@@ -487,22 +487,29 @@ class Import(Basic):
 
     Parameters
     ----------
-    file_path : str
+    fil : str
         The filepath of the module (i.e. header in C).
-    func_name : str
-        The name of the function to be imported.
+    funcs
+        The name of the function (or an iterable of names) to be imported.
     """
-    def __new__(cls, file_path, func_name):
-        file_path = Symbol(file_path)
-        func_name = Symbol(func_name)
-        return Basic.__new__(cls, file_path, func_name)
+    def __new__(cls, fil, funcs=None):
+        fil = Symbol(fil)
+        if not funcs:
+            funcs = Tuple()
+        elif iterable(funcs):
+            funcs = Tuple(*[Symbol(f) for f in funcs])
+        elif isinstance(funcs, str):
+            funcs = Tuple(Symbol(funcs))
+        else:
+            raise TypeError("Unrecognized funcs type: ", funcs)
+        return Basic.__new__(cls, fil, funcs)
 
     @property
-    def file_path(self):
+    def fil(self):
         return self._args[0]
 
     @property
-    def func_name(self):
+    def funcs(self):
         return self._args[1]
 
 
