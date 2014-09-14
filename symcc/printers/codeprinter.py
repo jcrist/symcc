@@ -99,10 +99,6 @@ class CodePrinter(StrPrinter):
             return self._print_not_supported(expr)
 
     def _print_NumberSymbol(self, expr):
-        # A Number symbol that is not implemented here or with _printmethod
-        # is registered and evaluated
-        self._number_symbols.add((expr,
-            self._print(expr.evalf(self._settings["precision"]))))
         return str(expr)
 
     def _print_Dummy(self, expr):
@@ -184,8 +180,7 @@ class CodePrinter(StrPrinter):
             return sign + '*'.join(a_str) + "/(%s)" % '*'.join(b_str)
 
     def _print_not_supported(self, expr):
-        self._not_supported.add(expr)
-        return self.emptyPrinter(expr)
+        raise TypeError("{0} not supported in {1}".format(type(expr), self.language))
 
     # Number constants
     _print_Catalan = _print_NumberSymbol

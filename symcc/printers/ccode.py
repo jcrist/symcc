@@ -235,7 +235,7 @@ class CCodePrinter(CodePrinter):
             code_lines = self.indent_code(code.splitlines(True))
             return ''.join(code_lines)
 
-        tab = "   "
+        tab = "    "
         inc_token = ('{', '(', '{\n', '(\n')
         dec_token = ('}', ')')
 

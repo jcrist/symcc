@@ -519,14 +519,18 @@ class Declare(Basic):
 
     Parameters
     ----------
+    dtype : DataType
+        The type for the declaration.
     variable(s)
         A single variable or an iterable of Variables. If iterable, all
         Variables must be of the same type.
-    dtype : DataType
-        The type for the declaration.
     """
 
     def __new__(cls, dtype, variables):
+        if isinstance(dtype, str):
+            dtype = datatype(dtype)
+        elif not isinstance(dtype, DataType):
+            raise TypeError("datatype must be an instance of DataType.")
         if isinstance(variables, Variable):
             variables = [variables]
         for var in variables:

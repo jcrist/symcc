@@ -408,7 +408,7 @@ class FCodePrinter(CodePrinter):
 
         level = 0
         cont_padding = 0
-        tabwidth = 3
+        tabwidth = 4
         new_code = []
         for i, line in enumerate(code):
             if line == '' or line == '\n':
