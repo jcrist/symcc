@@ -1,3 +1,5 @@
+from __future__ import print_function, division
+
 from sympy import __version__ as sympy_version
 
 from symcc.generators.codegen import CodeGen, header_comment, register_generator

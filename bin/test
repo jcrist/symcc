@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from path_hack import path_hack
 import pytest
+import sys
 
 path_hack()
-pytest.main()
+sys.exit(pytest.main())
