@@ -1,5 +1,7 @@
 # Symcc - Symbolic Math Compiler
 
+[![Build Status](https://travis-ci.org/jcrist/symcc.svg?branch=master)](https://travis-ci.org/jcrist/symcc)
+
 An experimental code printing, generation, wrapping, and compilation library
 for SymPy.
 
