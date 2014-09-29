@@ -12,7 +12,6 @@ from symcc.printers import ccode, CCodePrinter
 
 x, y, z = symbols('x, y, z')
 a, b, c = symbols('a, b, c')
-some_long_name = 'yaaaaaaa'
 
 
 def test_printmethod():

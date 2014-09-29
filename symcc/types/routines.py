@@ -1,349 +1,322 @@
 from __future__ import print_function, division
 
-
-from sympy.core import Symbol, S, Expr, Tuple, Equality, C
+from sympy.core import Symbol, Tuple, Expr, Basic, Integer, Dict
+from sympy.utilities.iterables import iterable
 from sympy.core.sympify import _sympify
-from sympy.core.compatibility import is_sequence
-from sympy.tensor import Idx, Indexed, IndexedBase
-from sympy.matrices import MatrixSymbol, ImmutableMatrix, MatrixBase
-
-from symcc.types.ast import Assign
-
-__all__ = [
-    # description of routines
-    "Assign", "AssignmentError", "Routine", "DataType",
-    "default_datatypes", "get_default_datatype", "Argument", "InputArgument",
-    "Result"]
+from sympy import simplify
+from sympy.core.assumptions import _assume_defined
 
 
-class AssignmentError(Exception):
-    """
-    Raised if an assignment variable for a loop is missing.
-    """
+from symcc.types.ast import (Assign, Argument, DataType, datatype,
+        InOutArgument, OutArgument, InArgument, Bool, Int, Float, Double)
+from symcc.utilities.util import do_once, iterate
+
+
+class RoutineResult(Basic):
+    """Base class for all outgoing information from a routine."""
     pass
 
 
-class Routine(object):
-    """Generic description of an evaluation routine for a set of sympy expressions.
+class RoutineReturn(RoutineResult):
+    """Represents a result provided via a ``Return``"""
 
-       A CodeGen class can translate instances of this class into C/Fortran/...
-       code. The routine specification covers all the features present in these
-       languages. The CodeGen part must raise an exception when certain features
-       are not present in the target language. For example, multiple return
-       values are possible in Python, but not in C or Fortran. Another example:
-       Fortran and Python support complex numbers, while C does not.
-    """
-    def __init__(self, name, expr, argument_sequence=None):
-        """Initialize a Routine instance.
-
-        ``name``
-            A string with the name of this routine in the generated code
-        ``expr``
-            The sympy expression that the Routine instance will represent.  If
-            given a list or tuple of expressions, the routine will be
-            considered to have multiple return values.
-        ``argument_sequence``
-            Optional list/tuple containing arguments for the routine in a
-            preferred order.  If omitted, arguments will be ordered
-            alphabetically, but with all input aguments first, and then output
-            or in-out arguments.
-
-        A decision about whether to use output arguments or return values,
-        is made depending on the mathematical expressions.  For an expression
-        of type Equality, the left hand side is made into an OutputArgument
-        (or an InOutArgument if appropriate).  Else, the calculated
-        expression is the return values of the routine.
-
-        A tuple of exressions can be used to create a routine with both
-        return value(s) and output argument(s).
-
-        """
-        arg_list = []
-
-        if is_sequence(expr) and not isinstance(expr, MatrixBase):
-            if not expr:
-                raise ValueError("No expression given")
-            expressions = Tuple(*expr)
-        else:
-            expressions = Tuple(expr)
-
-        # local variables
-        local_vars = set([i.label for i in expressions.atoms(Idx)])
-
-        # symbols that should be arguments
-        symbols = expressions.free_symbols - local_vars
-
-        # Decide whether to use output argument or return value
-        return_val = []
-        output_args = []
-        for expr in expressions:
-            if isinstance(expr, Equality):
-                out_arg = expr.lhs
-                expr = expr.rhs
-                if isinstance(out_arg, Indexed):
-                    dims = tuple([ (S.Zero, dim - 1) for dim in out_arg.shape])
-                    symbol = out_arg.base.label
-                elif isinstance(out_arg, Symbol):
-                    dims = []
-                    symbol = out_arg
-                elif isinstance(out_arg, MatrixSymbol):
-                    dims = tuple([ (S.Zero, dim - 1) for dim in out_arg.shape])
-                    symbol = out_arg
-                else:
-                    raise ValueError("Only Indexed, Symbol, or MatrixSymbol "
-                                       "can define output arguments.")
-
-                if expr.has(symbol):
-                    output_args.append(
-                        InOutArgument(symbol, out_arg, expr, dimensions=dims))
-                else:
-                    output_args.append(OutputArgument(
-                        symbol, out_arg, expr, dimensions=dims))
-
-                # avoid duplicate arguments
-                symbols.remove(symbol)
-            elif isinstance(expr, ImmutableMatrix):
-                # Create a "dummy" MatrixSymbol to use as the Output arg
-                out_arg = MatrixSymbol('out_%s' % abs(hash(expr)), *expr.shape)
-                dims = tuple([(S.Zero, dim - 1) for dim in out_arg.shape])
-                output_args.append(OutputArgument(out_arg, out_arg, expr,
-                        dimensions=dims))
-            else:
-                return_val.append(Result(expr))
-
-        # setup input argument list
-        array_symbols = {}
-        for array in expressions.atoms(Indexed):
-            array_symbols[array.base.label] = array
-        for array in expressions.atoms(MatrixSymbol):
-            array_symbols[array] = array
-
-        for symbol in sorted(symbols, key=str):
-            if symbol in array_symbols:
-                dims = []
-                array = array_symbols[symbol]
-                for dim in array.shape:
-                    dims.append((S.Zero, dim - 1))
-                metadata = {'dimensions': dims}
-            else:
-                metadata = {}
-
-            arg_list.append(InputArgument(symbol, **metadata))
-
-        output_args.sort(key=lambda x: str(x.name))
-        arg_list.extend(output_args)
-
-        if argument_sequence is not None:
-            # if the user has supplied IndexedBase instances, we'll accept that
-            new_sequence = []
-            for arg in argument_sequence:
-                if isinstance(arg, IndexedBase):
-                    new_sequence.append(arg.label)
-                else:
-                    new_sequence.append(arg)
-            argument_sequence = new_sequence
-
-            missing = [x for x in arg_list if x.name not in argument_sequence]
-            if missing:
-                raise ValueError("Argument list didn't specify: %s" %
-                        ", ".join([str(m.name) for m in missing]), missing)
-
-            # create redundant arguments to produce the requested sequence
-            name_arg_dict = dict([(x.name, x) for x in arg_list])
-            new_args = []
-            for symbol in argument_sequence:
-                try:
-                    new_args.append(name_arg_dict[symbol])
-                except KeyError:
-                    new_args.append(InputArgument(symbol))
-            arg_list = new_args
-
-        self.name = name
-        self.arguments = arg_list
-        self.results = return_val
-        self.local_vars = local_vars
+    def __new__(cls, dtype, expr):
+        if isinstance(dtype, str):
+            dtype = datatype(dtype)
+        elif not isinstance(dtype, DataType):
+            raise TypeError("datatype must be an instance of DataType.")
+        expr = _sympify(expr)
+        return Basic.__new__(cls, dtype, expr)
 
     @property
-    def variables(self):
-        """Returns a set containing all variables possibly used in this routine.
-
-        For routines with unnamed return values, the dummies that may or may
-        not be used will be included in the set.
-        """
-        v = set(self.local_vars)
-        for arg in self.arguments:
-            v.add(arg.name)
-        for res in self.results:
-            v.add(res.result_var)
-        return v
+    def dtype(self):
+        return self._args[0]
 
     @property
-    def result_variables(self):
-        """Returns a list of OutputArgument, InOutArgument and Result.
-
-        If return values are present, they are at the end ot the list.
-        """
-        args = [arg for arg in self.arguments if isinstance(
-            arg, (OutputArgument, InOutArgument))]
-        args.extend(self.results)
-        return args
+    def expr(self):
+        return self._args[1]
 
 
-class DataType(object):
-    """Holds strings for a certain datatype in different programming languages."""
-    def __init__(self, cname, fname, pyname):
-        self.cname = cname
-        self.fname = fname
-        self.pyname = pyname
+class RoutineInplace(RoutineResult):
+    """Represents a result provided via an inplace manipulation"""
 
+    def __new__(cls, arg, expr):
+        if not isinstance(arg, Argument):
+            raise TypeError("arg must be of type `Argument`")
+        expr = _sympify(expr)
+        return Basic.__new__(cls, arg, expr)
 
-default_datatypes = {
-    "int": DataType("int", "INTEGER*4", "int"),
-    "float": DataType("double", "REAL*8", "float")
-}
-
-
-def get_default_datatype(expr):
-    """Derives a decent data type based on the assumptions on the expression."""
-    if expr.is_integer:
-        return default_datatypes["int"]
-    elif isinstance(expr, MatrixBase):
-        for element in expr:
-            if not element.is_integer:
-                return(default_datatypes["float"])
-        return default_datatypes["int"]
-    else:
-        return default_datatypes["float"]
-
-
-class Variable(object):
-    """Represents a typed variable."""
-
-    def __init__(self, name, datatype=None, dimensions=None, precision=None):
-        """Initializes a Variable instance
-
-           name  --  must be of class Symbol or MatrixSymbol
-           datatype  --  When not given, the data type will be guessed based
-                         on the assumptions on the symbol argument.
-           dimension  --  If present, the argument is interpreted as an array.
-                          Dimensions must be a sequence containing tuples, i.e.
-                          (lower, upper) bounds for each index of the array
-           precision  --  FIXME
-        """
-        if not isinstance(name, (Symbol, MatrixSymbol)):
-            raise TypeError("The first argument must be a sympy symbol.")
-        if datatype is None:
-            datatype = get_default_datatype(name)
-        elif not isinstance(datatype, DataType):
-            raise TypeError("The (optional) `datatype' argument must be an instance of the DataType class.")
-        if dimensions and not isinstance(dimensions, (tuple, list)):
-            raise TypeError(
-                "The dimension argument must be a sequence of tuples")
-
-        self._name = name
-        self._datatype = {
-            'C': datatype.cname,
-            'FORTRAN': datatype.fname,
-            'PYTHON': datatype.pyname
-        }
-        self.dimensions = dimensions
-        self.precision = precision
+    @property
+    def dtype(self):
+        return self.name.dtype
 
     @property
     def name(self):
-        return self._name
+        return self._args[0]
 
-    def get_datatype(self, language):
-        """Returns the datatype string for the requested langage.
-
-            >>> from sympy import Symbol
-            >>> from sympy.utilities.codegen import Variable
-            >>> x = Variable(Symbol('x'))
-            >>> x.get_datatype('c')
-            'double'
-            >>> x.get_datatype('fortran')
-            'REAL*8'
-        """
-        try:
-            return self._datatype[language.upper()]
-        except KeyError:
-            raise ValueError("Has datatypes for languages: %s" %
-                    ", ".join(self._datatype))
+    @property
+    def expr(self):
+        return self._args[1]
 
 
-class Argument(Variable):
-    """An abstract Argument data structure: a name and a data type.
+def routine_result(expr):
+    """Easy creation of instances of RoutineResult"""
+    expr = _sympify(expr)
+    if isinstance(expr, Assign):
+        lhs = expr.lhs
+        return RoutineInplace(OutArgument(lhs, datatype(lhs)), expr.rhs)
+    else:
+        return RoutineReturn(datatype(expr), expr)
 
-       This structure is refined in the descendants below.
+
+class Routine(Basic):
+    """Represents a function definition.
+
+    Parameters
+    ----------
+    name : str
+        The name of the function.
+    args : iterable
+        The arguments to the function, of type Argument.
+    results : iterable
+        The results of the function, of type RoutineResult.
     """
 
-    def __init__(self, name, datatype=None, dimensions=None, precision=None):
-        """ See docstring of Variable.__init__
-        """
+    def __new__(cls, name, args, results):
+        # name
+        if isinstance(name, str):
+            name = Symbol(name)
+        elif not isinstance(name, Symbol):
+            raise TypeError("Function name must be Symbol or string")
+        # args
+        if not iterable(args):
+            raise TypeError("args must be an iterable")
+        if not all(isinstance(a, Argument) for a in args):
+            raise TypeError("All args must be of type Argument")
+        args = Tuple(*args)
+        # results
+        if not iterable(results):
+            raise TypeError("results must be an iterable")
+        if not all(isinstance(i, RoutineResult) for i in results):
+            raise TypeError("All results must be of type RoutineResult")
+        results = Tuple(*results)
+        return Basic.__new__(cls, name, args, results)
 
-        Variable.__init__(self, name, datatype, dimensions, precision)
+    @property
+    def name(self):
+        return self._args[0]
+
+    @property
+    def arguments(self):
+        return self._args[1]
+
+    @property
+    def results(self):
+        return self._args[2]
+
+    @property
+    def returns(self):
+        return tuple(r for r in self.results if isinstance(r, RoutineReturn))
+
+    @property
+    def inplace(self):
+        return tuple(r for r in self.results if isinstance(r, RoutineInplace))
+
+    def annotate(self):
+        """Prints out a description of the routine"""
+        pass
+
+    def __call__(self, *args):
+        return RoutineCall(self, args)
 
 
-class InputArgument(Argument):
-    pass
+def routine(name, args, expr):
+    """Easy interface for creating instances of Routine"""
+
+    if isinstance(name, str):
+        name = Symbol(name)
+    elif not isinstance(name, Symbol):
+        raise TypeError("name must be str or Symbol")
+    expr = _sympify(expr)
+    args = _make_arguments(args, expr)
+    results = [routine_result(i) for i in iterate(expr)]
+    return Routine(name, args, results)
 
 
-class ResultBase(object):
-    """Base class for all ``outgoing'' information from a routine
-
-       Objects of this class stores a sympy expression, and a sympy object
-       representing a result variable that will be used in the generated code
-       only if necessary.
-   """
-    def __init__(self, expr, result_var):
-        self.expr = expr
-        self.result_var = result_var
-
-
-class OutputArgument(Argument, ResultBase):
-    """OutputArgument are always initialized in the routine
-    """
-    def __init__(self, name, result_var, expr, datatype=None, dimensions=None, precision=None):
-        """ See docstring of Variable.__init__
-        """
-        Argument.__init__(self, name, datatype, dimensions, precision)
-        ResultBase.__init__(self, expr, result_var)
-
-
-class InOutArgument(Argument, ResultBase):
-    """InOutArgument are never initialized in the routine
-    """
-
-    def __init__(self, name, result_var, expr, datatype=None, dimensions=None, precision=None):
-        """ See docstring of Variable.__init__
-        """
-        if not datatype:
-            datatype = get_default_datatype(expr)
-        Argument.__init__(self, name, datatype, dimensions, precision)
-        ResultBase.__init__(self, expr, result_var)
+def _make_arguments(args, expr):
+    frees = expr.free_symbols
+    args_set = set(args)
+    missing = frees - args_set
+    if not args_set == frees:
+        raise ValueError("Missing arguments {0}".format(', '.join(
+                str(a) for a in missing)))
+    outs = set([i.lhs for i in iterate(expr) if isinstance(i, Assign)])
+    getvars = lambda x: x.rhs.free_symbols if isinstance(x, Assign) else x.free_symbols
+    ins = set.union(*[getvars(i) for i in iterate(expr)])
+    inouts = ins.intersection(outs)
+    ins = ins - inouts
+    outs = outs - inouts
+    arglist = []
+    for i in args:
+        if i in ins:
+            arglist.append(InArgument(i, datatype(i)))
+        elif i in outs:
+            arglist.append(OutArgument(i, datatype(i)))
+        elif i in inouts:
+            arglist.append(InOutArgument(i, datatype(i)))
+        else:
+            raise ValueError("How did you even get here????")
+    return arglist
 
 
-class Result(ResultBase):
-    """An expression for a scalar return value.
+# A dictionary of acceptable type aliases. The key is the type of the
+# argument defined in the Routine. The value is a tuple of types that
+# are acceptable to pass to the routine for that argument.
+_accepted_types = {Int: (Int,),
+                   Bool: (Bool,),
+                   Double: (Double, Float, Int),
+                   Float: (Double, Float, Int)}
 
-       The name result is used to avoid conflicts with the reserved word
-       'return' in the python language. It is also shorter than ReturnValue.
+def _validate_arg(arg, param):
+    arg_type = datatype(arg)
+    if not arg_type in _accepted_types[param.dtype]:
+        raise ValueError("Type mismatch on argument %s. "
+                         "Expected %s, got %s." % (n, param.dtype, arg_type))
 
-    """
 
-    def __init__(self, expr, datatype=None, precision=None):
-        """Initialize a (scalar) return value.
+class RoutineCall(Basic):
+    def __new__(cls, routine, args):
+        if not isinstance(routine, Routine):
+            raise TypeError("routine must be of type Routine")
+        if len(routine.arguments) != len(args):
+            raise ValueError("Incorrect number of arguments")
+        for n, (a, p) in enumerate(zip(args, routine.arguments)):
+            _validate_arg(a, p)
+        args = Tuple(*args)
+        return Basic.__new__(cls, routine, args)
 
-           The second argument is optional. When not given, the data type will
-           be guessed based on the assumptions on the expression argument.
-        """
-        if not isinstance(expr, Expr):
-            raise TypeError("The first argument must be a sympy expression.")
+    @property
+    def routine(self):
+        return self._args[0]
 
-        temp_var = Variable(Symbol('result_%s' % abs(hash(expr))),
-                datatype=datatype, dimensions=None, precision=precision)
-        ResultBase.__init__(self, expr, temp_var.name)
-        self._temp_variable = temp_var
+    @property
+    def arguments(self):
+        return self._args[1]
 
-    def get_datatype(self, language):
-        return self._temp_variable.get_datatype(language)
+    @property
+    def returns(self):
+        """Returns a tuple of return values"""
+        return self._returns()
+
+    @do_once
+    def _returns(self):
+        ret = self.routine.returns
+        if len(ret) == 1:
+            return ScalarRoutineCallResult(self, -1)
+        else:
+            return Tuple(*[ScalarRoutineCallResult(self, n) for n, i in enumerate(ret)])
+
+    @property
+    def inplace(self):
+        """Returns a dict of implicit return values"""
+        return self._inplace()
+
+    @do_once
+    def _inplace(self):
+        inp = self.routine.inplace
+        d = dict((i.name.name, ScalarRoutineCallResult(self, i.name.name)) for i in
+                iterate(inp))
+        return Dict(d)
+
+    def _sympystr(self, printer):
+        sstr = printer.doprint
+        args = ', '.join(sstr(a) for a in self.arguments)
+        name = sstr(self.routine.name)
+        return "{0}({1})".format(name, args)
+
+    def _eval_subs(self, old, new):
+        """Don't perform subs inside the routine"""
+        args = self.arguments.subs(old, new)
+        return self.func(self.routine, args)
+
+    def _eval_simplify(self, **kwargs):
+        args = simplify(self.arguments)
+        return self.func(self.routine, args)
+
+
+class ScalarRoutineCallResult(Expr):
+    """Represents a scalar result returned from a routine call"""
+
+    def __new__(cls, routine_call, idx):
+        if not isinstance(routine_call, RoutineCall):
+            raise TypeError("routine_call must be of type RoutineCall")
+        idx = _sympify(idx)
+        if isinstance(idx, Integer):
+            if not -1 <= idx < len(routine_call.routine.returns):
+                raise ValueError("idx out of bounds")
+        elif isinstance(idx, Symbol):
+            names = [a.name.name for a in routine_call.routine.inplace]
+            if idx not in names:
+                raise KeyError("unknown inplace result %s" % idx)
+        # Get the name of the symbol
+        if idx == -1:
+            expr = routine_call.routine.returns[0].expr
+        elif isinstance(idx, Integer):
+            expr = routine_call.routine.returns[idx].expr
+        else:
+            inp = routine_call.routine.inplace
+            expr = [i.expr for i in inp if idx == i.name.name][0]
+        # Sub in values to expression
+        args = [i.name for i in routine_call.routine.arguments]
+        values = [i for i in routine_call.arguments]
+        expr = expr.subs(dict(zip(args, values)))
+        # Create the object
+        s = Expr.__new__(cls, routine_call, idx)
+        s._expr = expr
+        _alias_assumptions(s, expr)
+        return s
+
+    def _sympystr(self, printer):
+        sstr = printer.doprint
+        call = sstr(self.rcall)
+        if self.idx == -1:
+            return "{0}.returns".format(call)
+        elif isinstance(self.idx, Integer):
+            return "{0}.returns[{1}]".format(call, sstr(self.idx))
+        else:
+            return "{0}.inplace[{1}]".format(call, sstr(self.idx))
+
+    def _eval_subs(self, old, new):
+        """Don't perform subs on the idx"""
+        rcall = self.rcall.subs(old, new)
+        return self.func(rcall, self.idx)
+
+    @property
+    def rcall(self):
+        return self._args[0]
+
+    @property
+    def idx(self):
+        return self._args[1]
+
+    @property
+    def expr(self):
+        return self._expr
+
+    @property
+    def free_symbols(self):
+        return self.rcall.arguments.free_symbols
+
+
+def _alias_assumptions(alias, obj):
+    """Alias all calls to alias.is_* to obj.is_*. Note that this assumes *no*
+    default assumptions"""
+    for a in _assume_defined:
+        alias._prop_handler[a] = _make_func(a)
+    alias._assumptions.clear()
+
+
+def _make_func(name):
+    def lookup(self):
+        return getattr(self.expr, 'is_' + name)
+    return lookup

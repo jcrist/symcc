@@ -4,4 +4,4 @@ import pytest
 import sys
 
 path_hack()
-sys.exit(pytest.main())
+sys.exit(pytest.main('-s'))

@@ -7,7 +7,7 @@ from sympy.core.mul import _keep_coeff
 from sympy.printing.str import StrPrinter
 from sympy.printing.precedence import precedence
 
-from symcc.types.routines import Assign, AssignmentError
+from symcc.types.ast import Assign
 
 __all__ = ["CodePrinter"]
 

@@ -9,9 +9,9 @@ AST Type Tree
 -------------
 
 *Basic*
-     |--->Assign      
-     |--->AugAssign  
-     |--->NativeOp  
+     |--->Assign
+     |--->AugAssign
+     |--->NativeOp
      |           |--------------|
      |                          |--->AddOp
      |                          |--->SubOp
@@ -259,7 +259,7 @@ class For(Basic):
     iter : iterable
     body : sympy expr
     """
-    
+
     def __new__(cls, target, iter, body):
         target = _sympify(target)
         if not iterable(iter):
@@ -293,43 +293,64 @@ class DataType(with_metaclass(Singleton, Basic)):
 
 
 class NativeBool(DataType):
+    _name = 'Bool'
     pass
 
 
 class NativeInteger(DataType):
+    _name = 'Int'
     pass
 
 
 class NativeFloat(DataType):
+    _name = 'Float'
     pass
 
 
 class NativeDouble(DataType):
+    _name = 'Double'
     pass
 
 
 class NativeVoid(DataType):
+    _name = 'Void'
     pass
 
 
-dtype_registry = {'bool': NativeBool(),
-                  'int': NativeInteger(),
-                  'float': NativeFloat(),
-                  'double': NativeDouble(),
-                  'void': NativeVoid()}
+Bool = NativeBool()
+Int = NativeInteger()
+Float = NativeFloat()
+Double = NativeDouble()
+Void = NativeVoid()
+
+
+dtype_registry = {'bool': Bool,
+                  'int': Int,
+                  'float': Float,
+                  'double': Double,
+                  'void': Void}
 
 
 def datatype(dtype):
     """Returns the datatype singleton for the given dtype"""
 
-    if dtype.lower() not in dtype_registry:
-        raise ValueError("Unrecognized datatype " + dtype)
-    return dtype_registry[dtype]
+    if isinstance(dtype, str):
+        if dtype.lower() not in dtype_registry:
+            raise ValueError("Unrecognized datatype " + dtype)
+        return dtype_registry[dtype]
+    else:
+        dtype = _sympify(dtype)
+        if dtype.is_integer:
+            return dtype_registry['int']
+        elif dtype.is_Boolean:
+            return dtype_registry['bool']
+        else:
+            return dtype_registry['double']
 
 
 class Variable(Basic):
     """Represents a typed variable.
-    
+
     Parameters
     ----------
     name : Symbol, MatrixSymbol
@@ -444,9 +465,10 @@ class FunctionDef(Basic):
 
     def __new__(cls, name, args, body, results):
         # name
-        if not isinstance(name, str):
-            raise TypeError("Function name must be string")
-        name = Symbol(name)
+        if isinstance(name, str):
+            name = Symbol(name)
+        elif not isinstance(name, Symbol):
+            raise TypeError("Function name must be Symbol or string")
         # args
         if not iterable(args):
             raise TypeError("args must be an iterable")
