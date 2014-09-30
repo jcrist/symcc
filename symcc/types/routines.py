@@ -5,6 +5,7 @@ from sympy.utilities.iterables import iterable
 from sympy.core.sympify import _sympify
 from sympy import simplify
 from sympy.core.assumptions import _assume_defined
+from sympy.matrices.expressions.matexpr import MatrixExpr, MatrixElement
 
 
 from symcc.types.ast import (Assign, Argument, DataType, datatype,
@@ -26,6 +27,8 @@ class RoutineReturn(RoutineResult):
         elif not isinstance(dtype, DataType):
             raise TypeError("datatype must be an instance of DataType.")
         expr = _sympify(expr)
+        if not isinstance(expr, (Expr, MatrixExpr)):
+            raise TypeError("Unsupported expression type %s." % type(expr))
         return Basic.__new__(cls, dtype, expr)
 
     @property
@@ -44,6 +47,8 @@ class RoutineInplace(RoutineResult):
         if not isinstance(arg, Argument):
             raise TypeError("arg must be of type `Argument`")
         expr = _sympify(expr)
+        if not isinstance(expr, (Expr, MatrixExpr)):
+            raise TypeError("Unsupported expression type %s." % type(expr))
         return Basic.__new__(cls, arg, expr)
 
     @property
@@ -177,12 +182,6 @@ _accepted_types = {Int: (Int,),
                    Double: (Double, Float, Int),
                    Float: (Double, Float, Int)}
 
-def _validate_arg(arg, param):
-    arg_type = datatype(arg)
-    if not arg_type in _accepted_types[param.dtype]:
-        raise ValueError("Type mismatch on argument %s. "
-                         "Expected %s, got %s." % (n, param.dtype, arg_type))
-
 
 class RoutineCall(Basic):
     def __new__(cls, routine, args):
@@ -191,9 +190,16 @@ class RoutineCall(Basic):
         if len(routine.arguments) != len(args):
             raise ValueError("Incorrect number of arguments")
         for n, (a, p) in enumerate(zip(args, routine.arguments)):
-            _validate_arg(a, p)
+            cls._validate_arg(a, p)
         args = Tuple(*args)
         return Basic.__new__(cls, routine, args)
+
+    @staticmethod
+    def _validate_arg(arg, param):
+        arg_type = datatype(arg)
+        if arg_type not in _accepted_types[param.dtype]:
+            raise ValueError("Type mismatch on argument %s. Expected "
+                            "%s, got %s." % (param, param.dtype, arg_type))
 
     @property
     def routine(self):
@@ -208,13 +214,23 @@ class RoutineCall(Basic):
         """Returns a tuple of return values"""
         return self._returns()
 
+    @staticmethod
+    def _result_dispatch(res):
+        if isinstance(res.expr, Expr):
+            return ScalarRoutineCallResult
+        elif isinstance(res.expr, MatrixExpr):
+            return MatrixRoutineCallResult
+        else:
+            raise TypeError("Unknown expression type {0}".format(type(res)))
+
     @do_once
     def _returns(self):
         ret = self.routine.returns
         if len(ret) == 1:
-            return ScalarRoutineCallResult(self, -1)
+            return self._result_dispatch(ret[0])(self, -1)
         else:
-            return Tuple(*[ScalarRoutineCallResult(self, n) for n, i in enumerate(ret)])
+            return Tuple(*[self._result_dispatch(i)(self, n) for n, i in
+                    enumerate(ret)])
 
     @property
     def inplace(self):
@@ -224,8 +240,8 @@ class RoutineCall(Basic):
     @do_once
     def _inplace(self):
         inp = self.routine.inplace
-        d = dict((i.name.name, ScalarRoutineCallResult(self, i.name.name)) for i in
-                iterate(inp))
+        d = dict((i.name.name, self._result_dispatch(i)(self, i.name.name)) for
+                i in iterate(inp))
         return Dict(d)
 
     def _sympystr(self, printer):
@@ -244,8 +260,8 @@ class RoutineCall(Basic):
         return self.func(self.routine, args)
 
 
-class ScalarRoutineCallResult(Expr):
-    """Represents a scalar result returned from a routine call"""
+class RoutineCallResult(Basic):
+    """Base class for all objects returned from calls to Routines"""
 
     def __new__(cls, routine_call, idx):
         if not isinstance(routine_call, RoutineCall):
@@ -271,10 +287,22 @@ class ScalarRoutineCallResult(Expr):
         values = [i for i in routine_call.arguments]
         expr = expr.subs(dict(zip(args, values)))
         # Create the object
-        s = Expr.__new__(cls, routine_call, idx)
+        s = cls._alias_type.__new__(cls, routine_call, idx)
         s._expr = expr
-        _alias_assumptions(s, expr)
+        cls._alias_assumptions(s, expr)
         return s
+
+    @staticmethod
+    def _alias_assumptions(alias, obj):
+        """Alias all calls to alias.is_* to obj.is_*. Note that this assumes *no*
+        default assumptions"""
+        def _make_func(name):
+            def lookup(self):
+                return getattr(self.expr, 'is_' + name)
+            return lookup
+        for a in _assume_defined:
+            alias._prop_handler[a] = _make_func(a)
+        alias._assumptions.clear()
 
     def _sympystr(self, printer):
         sstr = printer.doprint
@@ -308,15 +336,18 @@ class ScalarRoutineCallResult(Expr):
         return self.rcall.arguments.free_symbols
 
 
-def _alias_assumptions(alias, obj):
-    """Alias all calls to alias.is_* to obj.is_*. Note that this assumes *no*
-    default assumptions"""
-    for a in _assume_defined:
-        alias._prop_handler[a] = _make_func(a)
-    alias._assumptions.clear()
+class ScalarRoutineCallResult(RoutineCallResult, Expr):
+    """Represents a scalar result returned from a routine call"""
+    _alias_type = Expr
 
 
-def _make_func(name):
-    def lookup(self):
-        return getattr(self.expr, 'is_' + name)
-    return lookup
+class MatrixRoutineCallResult(RoutineCallResult, MatrixExpr):
+    """Represents a matrix result returned from a routine call"""
+    _alias_type = MatrixExpr
+
+    @property
+    def shape(self):
+        return _sympify(self.expr.shape)
+
+    def _entry(self, i, j):
+        return MatrixElement(self, i, j)
