@@ -3,29 +3,28 @@ from sympy import (symbols, sin, cos, Dict, sqrt, tan, simplify, MatrixSymbol,
 from sympy.utilities.pytest import raises
 from sympy.core.assumptions import _assume_defined
 
-from symcc.types.ast import Assign, InArgument, OutArgument, datatype
+from symcc.types.ast import Assign, InArgument, OutArgument, datatype, Double
 from symcc.types.routines import (RoutineReturn, RoutineInplace, Routine,
         routine, routine_result, ScalarRoutineCallResult, MatrixRoutineCallResult)
 
 
 a, b, c = symbols('a, b, c')
 out = symbols('out')
-dbl = datatype('double')
-a_arg = InArgument(a, dbl)
-b_arg = InArgument(b, dbl)
-c_arg = InArgument(c, dbl)
-out_arg = OutArgument(out, dbl)
+a_arg = InArgument(Double, a)
+b_arg = InArgument(Double, b)
+c_arg = InArgument(Double, c)
+out_arg = OutArgument(Double, out)
 expr = sin(a) + cos(b**2)*c
 inp_expr = Assign(out, expr)
 
 x = MatrixSymbol('x', 3, 1)
-x_arg = OutArgument(x, dbl)
+x_arg = OutArgument(Double, x)
 matres = Matrix([sin(a), cos(b), c])
 mat_expr = Assign(x, matres)
 
 
 def test_arg_invariance():
-    r = RoutineReturn(dbl, expr)
+    r = RoutineReturn(Double, expr)
     assert r.func(*r.args) == r
     rip = RoutineInplace(out_arg, expr)
     assert rip.func(*rip.args) == rip
@@ -41,14 +40,14 @@ def test_arg_invariance():
 
 def test_routine_result():
     r = routine_result(expr)
-    assert r == RoutineReturn(dbl, expr)
+    assert r == RoutineReturn(Double, expr)
     r = routine_result(Assign(out, expr))
     assert r == RoutineInplace(out_arg, expr)
 
 
 def test_routine():
     test = routine('test', (a, b, c), expr)
-    assert test == Routine('test', (a_arg, b_arg, c_arg), (RoutineReturn(dbl, expr),))
+    assert test == Routine('test', (a_arg, b_arg, c_arg), (RoutineReturn(Double, expr),))
     test = routine('test', (a, b, c, out), inp_expr)
     assert test == Routine('test', (a_arg, b_arg, c_arg, out_arg), (RoutineInplace(out_arg, expr),))
     test = routine('test', (a, b, c, x), mat_expr)

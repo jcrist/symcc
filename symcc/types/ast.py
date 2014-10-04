@@ -28,16 +28,14 @@ AST Type Tree
      |                    |--->NativeVoid
      |
      |--->For
-     |--->Result
-     |         |--->ReturnResult
-     |         |------------------------------|
-     |                                        |--->InOutArgument
-     |--->Variable                            |--->OutArgument
-     |           |--->Argument----------------|
-     |                       |
-     |                       |--->InArgument
+     |--->Variable
+     |           |--->Argument
+     |           |           |
+     |           |           |--->InArgument
+     |           |           |--->OutArgument
+     |           |           |--->InOutArgument
+     |           |--->Result
      |
-     |--->Module
      |--->FunctionDef
      |--->Import
      |--->Declare
@@ -53,6 +51,7 @@ from sympy.core.basic import Basic
 from sympy.core.sympify import _sympify
 from sympy.core.compatibility import with_metaclass
 from sympy.tensor import Indexed
+from sympy.matrices import ImmutableDenseMatrix
 from sympy.matrices.expressions.matexpr import MatrixSymbol, MatrixElement
 from sympy.utilities.iterables import iterable
 
@@ -90,6 +89,7 @@ class Assign(Basic):
     A := Matrix([[x, y, z]])
     >>> Assign(A[0, 1], x)
     A[0, 1] := x
+
     """
 
     def __new__(cls, lhs, rhs):
@@ -200,6 +200,7 @@ class AugAssign(Basic):
     >>> x, y = symbols('x, y')
     >>> AugAssign(x, AddOp, y)
     x += y
+
     """
 
     def __new__(cls, lhs, op, rhs):
@@ -331,21 +332,46 @@ dtype_registry = {'bool': Bool,
                   'void': Void}
 
 
-def datatype(dtype):
-    """Returns the datatype singleton for the given dtype"""
+def datatype(arg):
+    """Returns the datatype singleton for the given dtype.
 
-    if isinstance(dtype, str):
-        if dtype.lower() not in dtype_registry:
-            raise ValueError("Unrecognized datatype " + dtype)
-        return dtype_registry[dtype]
-    else:
-        dtype = _sympify(dtype)
-        if dtype.is_integer:
-            return dtype_registry['int']
-        elif dtype.is_Boolean:
-            return dtype_registry['bool']
+    Parameters
+    ----------
+    arg : str or sympy expression
+        If a str ('bool', 'int', 'float', 'double', or 'void'), return the
+        singleton for the corresponding dtype. If a sympy expression, return
+        the datatype that best fits the expression. This is determined from the
+        assumption system. For more control, use the `DataType` class directly.
+
+    Returns
+    -------
+    DataType
+
+    """
+    def infer_dtype(arg):
+        if arg.is_integer:
+            return Int
+        elif arg.is_Boolean:
+            return Bool
         else:
-            return dtype_registry['double']
+            return Double
+
+    if isinstance(arg, str):
+        if arg.lower() not in dtype_registry:
+            raise ValueError("Unrecognized datatype " + arg)
+        return dtype_registry[arg]
+    else:
+        arg = _sympify(arg)
+        if isinstance(arg, ImmutableDenseMatrix):
+            dts = [infer_dtype(i) for i in arg]
+            if all([i is Bool for i in dts]):
+                return Bool
+            elif all([i is Int for i in dts]):
+                return Int
+            else:
+                return Double
+        else:
+            return infer_dtype(arg)
 
 
 class Variable(Basic):
@@ -353,99 +379,105 @@ class Variable(Basic):
 
     Parameters
     ----------
-    name : Symbol, MatrixSymbol
-        The sympy object the variable represents.
     dtype : str, DataType
         The type of the variable. Can be either a DataType, or a str (bool,
         int, float, double).
+    name : Symbol, MatrixSymbol
+        The sympy object the variable represents.
+
     """
 
-    def __new__(cls, name, dtype):
-        if not isinstance(name, (Symbol, MatrixSymbol)):
-            raise TypeError("Only Symbols and MatrixSymbols can be Variables.")
+    def __new__(cls, dtype, name):
         if isinstance(dtype, str):
             dtype = datatype(dtype)
         elif not isinstance(dtype, DataType):
             raise TypeError("datatype must be an instance of DataType.")
-        return Basic.__new__(cls, name, dtype)
-
-    @property
-    def name(self):
-        return self._args[0]
+        if isinstance(name, str):
+            name = Symbol(name)
+        elif not isinstance(name, (Symbol, MatrixSymbol)):
+            raise TypeError("Only Symbols and MatrixSymbols can be Variables.")
+        return Basic.__new__(cls, dtype, name)
 
     @property
     def dtype(self):
+        return self._args[0]
+
+    @property
+    def name(self):
         return self._args[1]
 
 
 class Argument(Variable):
-    """An abstract Argument data structure"""
+    """An abstract Argument data structure."""
     pass
 
 
-class Result(Basic):
-    """Base class for all outgoing information from a routine."""
-    pass
+class Result(Variable):
+    """Represents a result directly returned from a routine.
 
+    Parameters
+    ----------
+    dtype : str, DataType
+        The type of the variable. Can be either a DataType, or a str (bool,
+        int, float, double).
+    name : Symbol or MatrixSymbol, optional
+        The sympy object the variable represents.
 
-class ReturnResult(Result):
-    """Represents a result provided via a ``Return``"""
+    """
 
-    def __new__(cls, dtype):
+    def __new__(cls, dtype, name=None):
         if isinstance(dtype, str):
             dtype = datatype(dtype)
         elif not isinstance(dtype, DataType):
             raise TypeError("datatype must be an instance of DataType.")
-        return Basic.__new__(cls, dtype)
-
-    @property
-    def dtype(self):
-        return self._args[0]
+        if not name:
+            name = Symbol('')
+        return Variable.__new__(cls, dtype, name)
 
 
 class InArgument(Argument):
-    """Argument provided as input only."""
-    pass
-
-
-class OutArgument(Argument, Result):
-    """OutputArgument are always initialized in the routine."""
-    pass
-
-
-class InOutArgument(Argument, Result):
-    """InOutArgument are never initialized in the routine."""
-    pass
-
-
-class Module(Basic):
-    """Represents a module-level object.
+    """Argument provided as input only.
 
     Parameters
     ----------
-    name : str
-        The name of the module.
-    body : iterable
-        The elements inside the module.
+    dtype : str, DataType
+        The type of the variable. Can be either a DataType, or a str (bool,
+        int, float, double).
+    name : Symbol, MatrixSymbol
+        The sympy object the variable represents.
+
     """
+    pass
 
-    def __new__(cls, name, body):
-        if not isinstance(name, str):
-            raise TypeError("Module name must be string")
-        name = Symbol(name)
-        # body
-        if not iterable(body):
-            raise TypeError("body must be an iterable")
-        body = Tuple(*body)
-        return Basic.__new__(cls, name, body)
 
-    @property
-    def name(self):
-        return self._args[0]
+class OutArgument(Argument):
+    """OutputArgument are always initialized in the routine.
 
-    @property
-    def body(self):
-        return self._args[0]
+    Parameters
+    ----------
+    dtype : str, DataType
+        The type of the variable. Can be either a DataType, or a str (bool,
+        int, float, double).
+    name : Symbol, MatrixSymbol
+        The sympy object the variable represents.
+
+    """
+    pass
+
+
+class InOutArgument(Argument):
+    """InOutArgument are never initialized in the routine.
+
+    Parameters
+    ----------
+    dtype : str, DataType
+        The type of the variable. Can be either a DataType, or a str (bool,
+        int, float, double).
+    name : Symbol, MatrixSymbol
+        The sympy object the variable represents.
+
+    """
+    pass
 
 
 class FunctionDef(Basic):
@@ -456,11 +488,12 @@ class FunctionDef(Basic):
     name : str
         The name of the function.
     args : iterable
-        The arguments to the function, of type Argument.
+        The arguments to the function, of type `Argument`.
     body : iterable
         The body of the function.
     results : iterable
-        The results of the function, of type Result.
+        The direct outputs of the function, of type `Result`.
+
     """
 
     def __new__(cls, name, args, body, results):
@@ -513,7 +546,9 @@ class Import(Basic):
         The filepath of the module (i.e. header in C).
     funcs
         The name of the function (or an iterable of names) to be imported.
+
     """
+
     def __new__(cls, fil, funcs=None):
         fil = Symbol(fil)
         if not funcs:
@@ -546,6 +581,7 @@ class Declare(Basic):
     variable(s)
         A single variable or an iterable of Variables. If iterable, all
         Variables must be of the same type.
+
     """
 
     def __new__(cls, dtype, variables):
@@ -578,7 +614,8 @@ class Return(Basic):
     Parameters
     ----------
     expr : sympy expr
-        The expression to return
+        The expression to return.
+
     """
 
     def __new__(cls, expr):

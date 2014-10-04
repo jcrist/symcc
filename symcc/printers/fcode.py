@@ -10,7 +10,7 @@ from sympy.core.compatibility import string_types
 from sympy.printing.precedence import precedence
 from sympy.sets.fancysets import Range
 
-from symcc.types.ast import (Assign, ReturnResult, InArgument,
+from symcc.types.ast import (Assign, Result, InArgument,
         OutArgument, InOutArgument, Variable)
 from symcc.printers.codeprinter import CodePrinter
 
@@ -125,12 +125,11 @@ class FCodePrinter(CodePrinter):
 
     def _print_FunctionDef(self, expr):
         name = expr.name
-        returns = [r for r in expr.results if isinstance(r, ReturnResult)]
-        if len(returns) == 1:
-            ret_type = self._print(returns[0].dtype)
+        if len(expr.results) == 1:
+            ret_type = self._print(expr.results[0].dtype)
             sig = '{0} function {1}'.format(ret_type, name)
             func_type = 'function'
-        elif len(returns) > 1:
+        elif len(expr.results) > 1:
             raise ValueError("Fortran doesn't support multiple return values.")
         else:
             sig = 'subroutine ' + name

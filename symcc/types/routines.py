@@ -1,3 +1,10 @@
+"""
+Types used to *describe* the underlying computation to be generated. The main
+entry point to be used by most users is `routine`. For more control, the
+classes may be used directly. See the docstrings for more details.
+
+"""
+
 from __future__ import print_function, division
 
 from sympy.core import Symbol, Tuple, Expr, Basic, Integer, Dict
@@ -6,7 +13,6 @@ from sympy.core.sympify import _sympify
 from sympy import simplify
 from sympy.core.assumptions import _assume_defined
 from sympy.matrices.expressions.matexpr import MatrixExpr, MatrixElement
-
 
 from symcc.types.ast import (Assign, Argument, DataType, datatype,
         InOutArgument, OutArgument, InArgument, Bool, Int, Float, Double)
@@ -19,7 +25,23 @@ class RoutineResult(Basic):
 
 
 class RoutineReturn(RoutineResult):
-    """Represents a result provided via a ``Return``"""
+    """Represents a result provided via a `Return`.
+
+    Parameters
+    ----------
+    dtype : DataType
+        Datatype of returned expression.
+    expr : sympifyable
+        Expression to be returned.
+
+    Attributes
+    ----------
+    dtype : DataType
+        Datatype of returned expression.
+    expr : sympifyable
+        Expression to be returned.
+
+    """
 
     def __new__(cls, dtype, expr):
         if isinstance(dtype, str):
@@ -41,11 +63,29 @@ class RoutineReturn(RoutineResult):
 
 
 class RoutineInplace(RoutineResult):
-    """Represents a result provided via an inplace manipulation"""
+    """Represents a result provided via an inplace manipulation.
+
+    Parameters
+    ----------
+    arg : OutArgument or InOutArgument
+        Argument in which the result will be returned.
+    expr : sympifyable
+        Expression to be returned.
+
+    Attributes
+    ----------
+    dtype : DataType
+        Datatype of returned expression.
+    argument : OutArgument or InOutArgument
+        Argument in which the result will be returned.
+    expr : sympifyable
+        Expression to be returned.
+
+    """
 
     def __new__(cls, arg, expr):
-        if not isinstance(arg, Argument):
-            raise TypeError("arg must be of type `Argument`")
+        if not isinstance(arg, (OutArgument, InOutArgument)):
+            raise TypeError("arg must be of type OutArgument or InOutArgument")
         expr = _sympify(expr)
         if not isinstance(expr, (Expr, MatrixExpr)):
             raise TypeError("Unsupported expression type %s." % type(expr))
@@ -56,7 +96,7 @@ class RoutineInplace(RoutineResult):
         return self.name.dtype
 
     @property
-    def name(self):
+    def argument(self):
         return self._args[0]
 
     @property
@@ -65,26 +105,56 @@ class RoutineInplace(RoutineResult):
 
 
 def routine_result(expr):
-    """Easy creation of instances of RoutineResult"""
+    """Easy creation of instances of `RoutineResult`.
+
+    `Assign` objects are created as `RoutineInplace`. Everything else is
+    created as a `RoutineReturn`. For more control, use the appropriate
+    `RoutineResult` class directly.
+
+    Parameters
+    ----------
+    expr : sympifyable
+        Expression for which a RoutineResult should be created.
+
+    """
+
     expr = _sympify(expr)
     if isinstance(expr, Assign):
         lhs = expr.lhs
-        return RoutineInplace(OutArgument(lhs, datatype(lhs)), expr.rhs)
+        return RoutineInplace(OutArgument(datatype(lhs), lhs), expr.rhs)
     else:
         return RoutineReturn(datatype(expr), expr)
 
 
 class Routine(Basic):
-    """Represents a function definition.
+    """Represents a routine definition.
 
     Parameters
     ----------
     name : str
-        The name of the function.
+        The name of the routine.
     args : iterable
-        The arguments to the function, of type Argument.
+        The arguments to the routine, of type `Argument`.
     results : iterable
-        The results of the function, of type RoutineResult.
+        The results of the routine, of type `RoutineResult`.
+
+    Attributes
+    ----------
+    name : Symbol
+        The name of the routine.
+    arguments : iterable
+        The arguments to the routine, of type `Argument`.
+    results : iterable
+        The results of the routine, of type `RoutineResult`.
+    returns : tuple
+        A tuple of all results of type `RoutineReturn`.
+    inplace : tuple
+        A tuple of all results of type `RoutineInplace`.
+
+    Methods
+    -------
+    annotate
+
     """
 
     def __new__(cls, name, args, results):
@@ -92,7 +162,7 @@ class Routine(Basic):
         if isinstance(name, str):
             name = Symbol(name)
         elif not isinstance(name, Symbol):
-            raise TypeError("Function name must be Symbol or string")
+            raise TypeError("name must be Symbol or string")
         # args
         if not iterable(args):
             raise TypeError("args must be an iterable")
@@ -136,7 +206,23 @@ class Routine(Basic):
 
 
 def routine(name, args, expr):
-    """Easy interface for creating instances of Routine"""
+    """Easy interface for creating instances of Routine.
+
+    Parameters
+    ----------
+    name : str
+        The name of the routine.
+    args : iterable
+        The arguments to the routine. Can be Symbols or MatrixSymbols.
+    expr
+        The expression to generate code for. Can be a single expression,
+        or a tuple of expressions. Tuples will result in multiple results.
+
+    Returns
+    -------
+    Routine
+
+    """
 
     if isinstance(name, str):
         name = Symbol(name)
@@ -149,6 +235,29 @@ def routine(name, args, expr):
 
 
 def _make_arguments(args, expr):
+    """Helper function, used for creating Argument instances automatically.
+
+    Infers argument type based on use in the expr. All lhs symbols of
+    `Assign` types are set as `OutArguments`. If a symbol is only used to
+    calculate an expression, it's an `InArgument`. Symbols that satisfy both
+    are `InOutArguments`.
+
+    If arguments are missing for the expression, throws a ValueError.
+
+    Parameters
+    ----------
+    args : iterable
+        An iterable of arguments to the routine.
+    expr
+        The expression to generate code for, or an iterable of expressions.
+
+    Returns
+    -------
+    arglist : list
+        List of arguments for the routine, in order they were provided.
+
+    """
+
     frees = expr.free_symbols
     args_set = set(args)
     missing = frees - args_set
@@ -164,11 +273,11 @@ def _make_arguments(args, expr):
     arglist = []
     for i in args:
         if i in ins:
-            arglist.append(InArgument(i, datatype(i)))
+            arglist.append(InArgument(datatype(i), i))
         elif i in outs:
-            arglist.append(OutArgument(i, datatype(i)))
+            arglist.append(OutArgument(datatype(i), i))
         elif i in inouts:
-            arglist.append(InOutArgument(i, datatype(i)))
+            arglist.append(InOutArgument(datatype(i), i))
         else:
             raise ValueError("How did you even get here????")
     return arglist
@@ -184,6 +293,32 @@ _accepted_types = {Int: (Int,),
 
 
 class RoutineCall(Basic):
+    """Represents a call to a `Routine` in the generated code.
+
+    Parameters
+    ----------
+    routine : Routine
+        The `Routine` being called.
+    args : iterable
+        The arguments being passed to the `Routine`, of type `Argument`.
+
+    Attributes
+    ----------
+    routine : Routine
+        The `Routine` being called.
+    arguments : iterable
+        The arguments being passed to the `Routine`, of type `Argument`.
+    returns : tuple
+        A `tuple` of `ReturnCallResult` types. These can be used in other
+        expressions, to represent the result of this expression call.
+    inplace : dict
+        A `dict` of `ReturnCallResult` types. These can be used in other
+        expressions, to represent the result of this expression call. The keys
+        are the `Symbol` or `MatrixSymbol` representing the `OutArgument` or
+        `InOutArgument` that the result is returned via.
+
+    """
+
     def __new__(cls, routine, args):
         if not isinstance(routine, Routine):
             raise TypeError("routine must be of type Routine")
@@ -214,6 +349,11 @@ class RoutineCall(Basic):
         """Returns a tuple of return values"""
         return self._returns()
 
+    @property
+    def inplace(self):
+        """Returns a dict of implicit return values"""
+        return self._inplace()
+
     @staticmethod
     def _result_dispatch(res):
         if isinstance(res.expr, Expr):
@@ -232,16 +372,11 @@ class RoutineCall(Basic):
             return Tuple(*[self._result_dispatch(i)(self, n) for n, i in
                     enumerate(ret)])
 
-    @property
-    def inplace(self):
-        """Returns a dict of implicit return values"""
-        return self._inplace()
-
     @do_once
     def _inplace(self):
         inp = self.routine.inplace
-        d = dict((i.name.name, self._result_dispatch(i)(self, i.name.name)) for
-                i in iterate(inp))
+        d = dict((i.argument.name, self._result_dispatch(i)(self,
+                i.argument.name)) for i in iterate(inp))
         return Dict(d)
 
     def _sympystr(self, printer):
@@ -261,7 +396,15 @@ class RoutineCall(Basic):
 
 
 class RoutineCallResult(Basic):
-    """Base class for all objects returned from calls to Routines"""
+    """Base class for all objects returned from calls to `Routine`s.
+
+    Objects of this type can be used in further expressions, representing the
+    result of the `Routine`. Assumptions for this result are "aliased" to the
+    symbolic expression being represented. Classes that subclass from this
+    should define `_alias_type` to be the type of object they're aliasing
+    (e.g. `Expr` or `MatrixExpr`).
+
+    """
 
     def __new__(cls, routine_call, idx):
         if not isinstance(routine_call, RoutineCall):
@@ -271,7 +414,7 @@ class RoutineCallResult(Basic):
             if not -1 <= idx < len(routine_call.routine.returns):
                 raise ValueError("idx out of bounds")
         elif isinstance(idx, Symbol):
-            names = [a.name.name for a in routine_call.routine.inplace]
+            names = [a.argument.name for a in routine_call.routine.inplace]
             if idx not in names:
                 raise KeyError("unknown inplace result %s" % idx)
         # Get the name of the symbol
@@ -281,7 +424,7 @@ class RoutineCallResult(Basic):
             expr = routine_call.routine.returns[idx].expr
         else:
             inp = routine_call.routine.inplace
-            expr = [i.expr for i in inp if idx == i.name.name][0]
+            expr = [i.expr for i in inp if idx == i.argument.name][0]
         # Sub in values to expression
         args = [i.name for i in routine_call.routine.arguments]
         values = [i for i in routine_call.arguments]
@@ -337,12 +480,58 @@ class RoutineCallResult(Basic):
 
 
 class ScalarRoutineCallResult(RoutineCallResult, Expr):
-    """Represents a scalar result returned from a routine call"""
+    """Represents a scalar result returned from a routine call.
+
+    Parameters
+    ----------
+    routine_call : RoutineCall
+        Call that the result is from.
+    idx : int or Expr/MatrixExpr
+        The index used to get this object. If an `int`, is the index for
+        `routine_call.returns`. If `idx` is -1, indicates that there is only
+        one `RoutineReturn` for this `Routine`. If `idx` is a
+        `Symbol`/`MatrixSymbol`, it's the key used to get the result from
+        `routine_call.inplace`.
+
+    Attributes
+    ----------
+    rcall : Routinecall
+        Call that the result is from.
+    idx : int or Expr/MatrixExpr
+        The index used to get this object.
+    expr : sympy expression
+        The expression that this result represents.
+
+    """
+
     _alias_type = Expr
 
 
 class MatrixRoutineCallResult(RoutineCallResult, MatrixExpr):
-    """Represents a matrix result returned from a routine call"""
+    """Represents a matrix result returned from a routine call.
+
+    Parameters
+    ----------
+    routine_call : RoutineCall
+        Call that the result is from.
+    idx : int or Expr/MatrixExpr
+        The index used to get this object. If an `int`, is the index for
+        `routine_call.returns`. If `idx` is -1, indicates that there is only
+        one `RoutineReturn` for this `Routine`. If `idx` is a
+        `Symbol`/`MatrixSymbol`, it's the key used to get the result from
+        `routine_call.inplace`.
+
+    Attributes
+    ----------
+    rcall : Routinecall
+        Call that the result is from.
+    idx : int or Expr/MatrixExpr
+        The index used to get this object.
+    expr : sympy expression
+        The expression that this result represents.
+
+    """
+
     _alias_type = MatrixExpr
 
     @property

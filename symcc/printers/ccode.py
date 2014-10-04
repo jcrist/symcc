@@ -5,7 +5,7 @@ from sympy.core.compatibility import string_types
 from sympy.printing.precedence import precedence
 from sympy.sets.fancysets import Range
 
-from symcc.types.ast import Assign, datatype, ReturnResult
+from symcc.types.ast import Assign, datatype, Result
 from symcc.printers.codeprinter import CodePrinter
 
 __all__ = ["CCodePrinter", "ccode"]
@@ -98,10 +98,9 @@ class CCodePrinter(CodePrinter):
         return 'void'
 
     def _print_FunctionDef(self, expr):
-        returns = [r for r in expr.results if isinstance(r, ReturnResult)]
-        if len(returns) == 1:
-            ret_type = self._print(returns[0].dtype)
-        elif len(returns) > 1:
+        if len(expr.results) == 1:
+            ret_type = self._print(expr.results[0].dtype)
+        elif len(expr.results) > 1:
             raise ValueError("C doesn't support multiple return values.")
         else:
             ret_type = self._print(datatype('void'))

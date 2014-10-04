@@ -6,7 +6,7 @@ from sympy.utilities.pytest import raises
 from sympy.utilities.lambdify import implemented_function
 from sympy.tensor import IndexedBase, Idx
 
-from symcc.types.ast import (Assign, AugAssign, For, InArgument, ReturnResult,
+from symcc.types.ast import (Assign, AugAssign, For, InArgument, Result,
         FunctionDef, Return, Import, Declare, Variable)
 from symcc.printers import ccode, CCodePrinter
 
@@ -210,9 +210,9 @@ def test_ccode_For():
 
 def test_ccode_FunctionDef():
     name = 'test'
-    args = (InArgument(a, 'double'), InArgument(b, 'int'))
+    args = (InArgument('double', a), InArgument('int', b))
     body = (Return(sin(a) + cos(b)),)
-    results = (ReturnResult('double'),)
+    results = (Result('double'),)
     f = FunctionDef(name, args, body, results)
     assert ccode(f) == ("double test(double a, int b) {\n"
                         "    return sin(a) + cos(b);\n"
@@ -224,5 +224,5 @@ def test_ccode_Import():
 
 
 def test_ccode_Declare():
-    assert ccode(Declare('int', Variable(a, 'int'))) == 'int a;'
-    assert ccode(Declare('double', (Variable(a, 'double'), Variable(b, 'double')))) == 'double a, b;'
+    assert ccode(Declare('int', Variable('int', a))) == 'int a;'
+    assert ccode(Declare('double', (Variable('double', a), Variable('double', b)))) == 'double a, b;'

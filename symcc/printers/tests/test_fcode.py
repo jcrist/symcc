@@ -363,9 +363,9 @@ def test_fcode_Import():
 
 
 def test_fcode_Declare():
-    assert fcode(Declare('int', InArgument(a, 'int'))) == "integer, intent(in) :: a"
-    assert fcode(Declare('double', (InArgument(a, 'double'), InArgument(b,
-            'double'), OutArgument(c, 'double'),
-            InOutArgument(x, 'double')))) == ("real(dp), intent(in) :: a, b\n" 
-                                               "real(dp), intent(inout) :: x\n" 
-                                               "real(dp), intent(out) :: c")
+    assert fcode(Declare('int', InArgument('int', a))) == "integer, intent(in) :: a"
+    assert fcode(Declare('double', (InArgument('double', a), InArgument('double',
+            b), OutArgument('double', c),
+            InOutArgument('double', x)))) == ("real(dp), intent(in) :: a, b\n" 
+                                              "real(dp), intent(inout) :: x\n" 
+                                              "real(dp), intent(out) :: c")
